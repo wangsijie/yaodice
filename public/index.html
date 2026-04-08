@@ -231,23 +231,32 @@
       margin: 16px 0;
     }
     .die {
-      width: 56px;
-      height: 56px;
-      background: white;
-      border-radius: 10px;
+      width: 52px;
+      height: 52px;
+      background: #fff;
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      padding: 6px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      background: #1a1a2e;
+      border-radius: 50%;
+      align-self: center;
+      justify-self: center;
+    }
+    .die-1 .dot, .die-4 .dot {
+      background: #e94560;
+    }
+    .die.hidden-die {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.6rem;
-      font-weight: 700;
-      color: #333;
-      position: relative;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }
-    .die.hidden-die {
       background: var(--accent);
-      color: transparent;
-      font-size: 1.4rem;
     }
     .die.hidden-die::after {
       content: '?';
@@ -453,7 +462,10 @@
       <div class="game-section-label">🎉 所有人的骰子</div>
       <div id="results-list"></div>
       <div class="gap"></div>
-      <button id="btn-next-round" onclick="backToLobby()">返回大厅</button>
+      <div id="results-buttons" style="display:flex;gap:10px;width:100%;max-width:320px">
+        <button id="btn-play-again" onclick="playAgain()" style="flex:1">🎲 再摇一把</button>
+        <button id="btn-back-lobby" class="btn-secondary" onclick="backToLobby()" style="flex:1">返回大厅</button>
+      </div>
     </div>
   </div>
 
@@ -634,6 +646,7 @@
           state.isParticipant = msg.participants.some(p => p.id === state.myId);
           state.rolledPlayers = new Set();
           state.revealedPlayers = new Set();
+          document.getElementById('results-area').style.display = 'none';
           showPage('game');
           renderGame();
           break;
@@ -793,7 +806,7 @@
     function renderMyDice() {
       const container = document.getElementById('your-dice');
       if (state.myDice) {
-        container.innerHTML = state.myDice.map(d => `<div class="die">${diceEmoji(d)}</div>`).join('');
+        container.innerHTML = state.myDice.map(d => diceHTML(d)).join('');
       } else {
         container.innerHTML = Array(5).fill('<div class="die hidden-die"></div>').join('');
       }
@@ -827,13 +840,24 @@
             ${r.id === state.myId ? ' (你)' : ''}
           </div>
           <div class="dice-container">
-            ${r.dice.map(d => `<div class="die">${diceEmoji(d)}</div>`).join('')}
+            ${r.dice.map(d => diceHTML(d)).join('')}
           </div>
         </div>
       `).join('');
 
-      // Show next round button only for host
-      document.getElementById('btn-next-round').style.display = 'block';
+      document.getElementById('results-buttons').style.display = 'flex';
+      // Only host can start next round directly
+      document.getElementById('btn-play-again').style.display =
+        state.myId === state.hostId ? 'block' : 'none';
+      document.getElementById('btn-back-lobby').style.flex =
+        state.myId === state.hostId ? '1' : 'unset';
+      document.getElementById('btn-back-lobby').style.width =
+        state.myId === state.hostId ? 'auto' : '100%';
+    }
+
+    function playAgain() {
+      document.getElementById('results-area').style.display = 'none';
+      sendMsg({ type: 'start_round' });
     }
 
     function backToLobby() {
@@ -849,8 +873,19 @@
     }
 
     // ============ Helpers ============
-    function diceEmoji(n) {
-      return ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][n] || n;
+    function diceHTML(n) {
+      const layouts = {
+        1: [[2,2]],
+        2: [[1,3],[3,1]],
+        3: [[1,3],[2,2],[3,1]],
+        4: [[1,1],[1,3],[3,1],[3,3]],
+        5: [[1,1],[1,3],[2,2],[3,1],[3,3]],
+        6: [[1,1],[1,3],[2,1],[2,3],[3,1],[3,3]],
+      };
+      const dots = (layouts[n] || []).map(([r,c]) =>
+        `<span class="dot" style="grid-row:${r};grid-column:${c}"></span>`
+      ).join('');
+      return `<div class="die die-${n}">${dots}</div>`;
     }
 
     function escHtml(s) {
