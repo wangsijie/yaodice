@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>摇骰子</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #e94560;
+      --primary-dark: #c73e54;
+      --accent: #0f3460;
+      --text: #eee;
+      --text-dim: #999;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    .page {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      max-width: 480px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .page.active { display: flex; }
+
+    h1 { font-size: 2rem; margin-bottom: 8px; }
+    h2 { font-size: 1.5rem; margin-bottom: 16px; }
+    .subtitle { color: var(--text-dim); margin-bottom: 32px; font-size: 0.9rem; }
+
+    .emoji-title { font-size: 4rem; margin-bottom: 16px; }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      padding: 14px 28px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      -webkit-tap-highlight-color: transparent;
+      width: 100%;
+      max-width: 320px;
+    }
+    button:active { transform: scale(0.97); background: var(--primary-dark); }
+    button:disabled { opacity: 0.4; transform: none; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: var(--accent);
+    }
+    .btn-secondary:active { background: #0a2647; }
+
+    .btn-small {
+      padding: 8px 16px;
+      font-size: 0.9rem;
+      width: auto;
+    }
+
+    .btn-reveal {
+      background: var(--success);
+      color: #000;
+    }
+    .btn-reveal:active { background: #22c55e; }
+
+    input {
+      background: var(--surface);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      font-size: 1.1rem;
+      color: var(--text);
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus { border-color: var(--primary); }
+    input::placeholder { color: var(--text-dim); }
+
+    .input-code {
+      font-size: 1.8rem;
+      letter-spacing: 8px;
+      font-weight: 700;
+    }
+
+    .gap { height: 12px; }
+    .gap-lg { height: 24px; }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+      margin: 16px 0;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--accent);
+    }
+
+    /* Room code display */
+    .room-code-display {
+      background: var(--surface);
+      border: 2px dashed var(--accent);
+      border-radius: var(--radius);
+      padding: 16px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      width: 100%;
+      max-width: 320px;
+    }
+    .room-code-display:active { border-color: var(--primary); }
+    .room-code-number {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 6px;
+      color: var(--warning);
+    }
+    .room-code-hint {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* Player list */
+    .player-list {
+      width: 100%;
+      max-width: 320px;
+      list-style: none;
+    }
+    .player-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+    .player-item .host-badge {
+      background: var(--warning);
+      color: #000;
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .player-item .you-badge {
+      background: var(--primary);
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .player-item .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-left: auto;
+    }
+    .player-item .status-dot.offline { background: var(--text-dim); }
+
+    .player-item.selectable {
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .player-item.selectable:active { background: var(--accent); }
+    .player-item.selected {
+      border: 2px solid var(--primary);
+    }
+
+    /* Mode selector */
+    .mode-selector {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 16px;
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 10px;
+      font-size: 0.9rem;
+      background: var(--surface);
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .mode-btn.active {
+      border-color: var(--primary);
+      background: var(--primary);
+    }
+
+    /* Dice area */
+    .dice-container {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 16px 0;
+    }
+    .die {
+      width: 56px;
+      height: 56px;
+      background: white;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #333;
+      position: relative;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .die.hidden-die {
+      background: var(--accent);
+      color: transparent;
+      font-size: 1.4rem;
+    }
+    .die.hidden-die::after {
+      content: '?';
+      color: var(--text-dim);
+      font-size: 1.4rem;
+    }
+
+    /* Shake animation */
+    @keyframes shake {
+      0%, 100% { transform: rotate(0deg); }
+      10% { transform: rotate(-15deg) translateX(-3px); }
+      20% { transform: rotate(15deg) translateX(3px); }
+      30% { transform: rotate(-10deg) translateX(-2px); }
+      40% { transform: rotate(10deg) translateX(2px); }
+      50% { transform: rotate(-5deg); }
+      60% { transform: rotate(5deg); }
+      70% { transform: rotate(-3deg); }
+      80% { transform: rotate(3deg); }
+    }
+    .shaking .die {
+      animation: shake 0.6s ease-in-out;
+    }
+
+    /* Result card */
+    .result-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px;
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 10px;
+    }
+    .result-card .result-name {
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    /* Status indicators in game */
+    .participants-status {
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 16px;
+    }
+    .participant-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      font-size: 0.9rem;
+    }
+    .participant-row .p-status {
+      margin-left: auto;
+      font-size: 0.8rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .p-status.waiting { background: var(--accent); color: var(--text-dim); }
+    .p-status.rolled { background: #1e3a5f; color: var(--warning); }
+    .p-status.revealed { background: #14532d; color: var(--success); }
+
+    .game-section-label {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      z-index: 100;
+      animation: fadeInUp 0.3s ease;
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    .error-text { color: var(--primary); font-size: 0.85rem; margin-top: 8px; }
+
+    /* Scroll for results */
+    .results-area {
+      width: 100%;
+      max-width: 320px;
+      overflow-y: auto;
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Page: Home -->
+  <div id="page-home" class="page active">
+    <div class="gap-lg"></div>
+    <div class="emoji-title">🎲</div>
+    <h1>摇骰子</h1>
+    <p class="subtitle">多人在线 · 酒桌必备</p>
+
+    <button id="btn-create" onclick="createRoom()">创建房间</button>
+    
+    <div class="divider">或加入房间</div>
+    
+    <input id="input-code" class="input-code" type="tel" maxlength="6" placeholder="000000" inputmode="numeric">
+    <div class="gap"></div>
+    <button class="btn-secondary" onclick="joinRoom()">加入房间</button>
+    <p id="home-error" class="error-text" style="display:none"></p>
+  </div>
+
+  <!-- Page: Nickname -->
+  <div id="page-nickname" class="page">
+    <div class="gap-lg"></div>
+    <div class="emoji-title">😎</div>
+    <h2>你的昵称</h2>
+    
+    <input id="input-nickname" type="text" maxlength="12" placeholder="输入昵称">
+    <div class="gap"></div>
+    <button id="btn-random-nick" class="btn-secondary btn-small" onclick="randomNickname()">🎲 随机一个</button>
+    <div class="gap-lg"></div>
+    <button onclick="confirmNickname()">进入房间</button>
+  </div>
+
+  <!-- Page: Lobby -->
+  <div id="page-lobby" class="page">
+    <div class="gap"></div>
+    <h2>房间</h2>
+    
+    <div class="room-code-display" onclick="copyRoomCode()">
+      <div class="room-code-number" id="lobby-room-code">------</div>
+      <div class="room-code-hint">点击复制房间号</div>
+    </div>
+    
+    <div class="gap-lg"></div>
+    <div class="game-section-label">玩家</div>
+    <ul id="lobby-players" class="player-list"></ul>
+    
+    <div class="gap"></div>
+    <div id="host-controls" style="width:100%;max-width:320px;display:none">
+      <div class="game-section-label">模式</div>
+      <div class="mode-selector">
+        <button class="mode-btn active" data-mode="all" onclick="setMode('all')">🎯 所有人摇</button>
+        <button class="mode-btn" data-mode="1v1" onclick="setMode('1v1')">⚔️ 1v1</button>
+      </div>
+      <div id="1v1-select" style="display:none">
+        <div class="game-section-label">选择两名玩家</div>
+        <ul id="1v1-player-list" class="player-list"></ul>
+        <div class="gap"></div>
+      </div>
+      <button id="btn-start" onclick="startRound()">开始摇骰子！</button>
+    </div>
+    <div id="guest-hint" style="display:none;color:var(--text-dim);font-size:0.9rem;text-align:center">
+      等待房主开始游戏...
+    </div>
+  </div>
+
+  <!-- Page: Game -->
+  <div id="page-game" class="page">
+    <div class="gap"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <h2 style="margin-bottom:0" id="game-title">摇骰子</h2>
+      <span id="game-mode-badge" style="font-size:0.75rem;background:var(--accent);padding:3px 8px;border-radius:4px"></span>
+    </div>
+
+    <div class="game-section-label">参与者状态</div>
+    <div id="participants-status" class="participants-status"></div>
+
+    <!-- Your dice area -->
+    <div id="your-dice-area" style="width:100%;max-width:320px;text-align:center">
+      <div class="game-section-label">你的骰子</div>
+      <div id="your-dice" class="dice-container">
+        <div class="die hidden-die"></div>
+        <div class="die hidden-die"></div>
+        <div class="die hidden-die"></div>
+        <div class="die hidden-die"></div>
+        <div class="die hidden-die"></div>
+      </div>
+      <div class="gap"></div>
+      <button id="btn-roll" onclick="rollDice()">🎲 摇！</button>
+      <button id="btn-reveal" class="btn-reveal" onclick="revealDice()" style="display:none">👀 开！</button>
+    </div>
+
+    <!-- Spectator view -->
+    <div id="spectator-hint" style="display:none;color:var(--text-dim);font-size:0.9rem;text-align:center;margin:20px 0">
+      你是观众，等待结果揭晓...
+    </div>
+
+    <!-- Results -->
+    <div id="results-area" class="results-area" style="display:none">
+      <div class="gap"></div>
+      <div class="game-section-label">🎉 所有人的骰子</div>
+      <div id="results-list"></div>
+      <div class="gap"></div>
+      <button id="btn-next-round" onclick="backToLobby()">返回大厅</button>
+    </div>
+  </div>
+
+  <script>
+    // ============ State ============
+    let ws = null;
+    let state = {
+      roomCode: '',
+      myId: '',
+      hostId: '',
+      nickname: '',
+      players: [],
+      round: null,
+      gameMode: 'all',
+      selectedPlayers: [],
+      myDice: null,
+      hasRolled: false,
+      hasRevealed: false,
+      isParticipant: false,
+      rolledPlayers: new Set(),
+      revealedPlayers: new Set(),
+    };
+
+    // ============ Navigation ============
+    function showPage(id) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + id).classList.add('active');
+    }
+
+    // ============ Home ============
+    async function createRoom() {
+      const btn = document.getElementById('btn-create');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/room/create', { method: 'POST' });
+        const data = await res.json();
+        state.roomCode = data.code;
+        showPage('nickname');
+        randomNickname();
+      } catch (e) {
+        showError('home-error', '创建失败，请重试');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function joinRoom() {
+      const code = document.getElementById('input-code').value.trim();
+      if (!/^\d{6}$/.test(code)) {
+        showError('home-error', '请输入6位数字房间号');
+        return;
+      }
+      try {
+        const res = await fetch('/api/room/' + code);
+        const data = await res.json();
+        if (!data.exists) {
+          showError('home-error', '房间不存在');
+          return;
+        }
+        state.roomCode = code;
+        showPage('nickname');
+        randomNickname();
+      } catch (e) {
+        showError('home-error', '加入失败，请重试');
+      }
+    }
+
+    function showError(id, msg) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => el.style.display = 'none', 3000);
+    }
+
+    // ============ Nickname ============
+    const ADJS = ['快乐','神秘','飞翔','淡定','暴躁','优雅','沉默','勇敢','聪明','迷糊','傲娇','佛系','硬核','摸鱼','咸鱼','划水'];
+    const NOUNS = ['熊猫','青蛙','企鹅','老虎','兔子','猴子','柴犬','猫咪','鹦鹉','海豚','考拉','狐狸','龙虾','河豚','仓鼠','水獭'];
+
+    function randomNickname() {
+      const a = ADJS[Math.floor(Math.random() * ADJS.length)];
+      const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+      document.getElementById('input-nickname').value = a + n;
+    }
+
+    function confirmNickname() {
+      const nick = document.getElementById('input-nickname').value.trim();
+      if (!nick) {
+        randomNickname();
+        return;
+      }
+      state.nickname = nick;
+      connectWebSocket();
+    }
+
+    // ============ WebSocket ============
+    function connectWebSocket() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/${state.roomCode}`);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'join', nickname: state.nickname }));
+      };
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        // Simple reconnect after 2s
+        setTimeout(() => {
+          if (state.roomCode) connectWebSocket();
+        }, 2000);
+      };
+    }
+
+    function sendMsg(msg) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+      }
+    }
+
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'room_state':
+          state.myId = msg.you;
+          state.hostId = msg.hostId;
+          state.players = msg.players;
+          state.gameMode = msg.gameMode || 'all';
+          state.selectedPlayers = msg.selectedPlayers || [];
+          if (msg.round) {
+            // Rejoin mid-round
+            state.round = msg.round;
+            state.myDice = msg.round.yourDice;
+            state.hasRolled = msg.round.rolled.includes(state.myId);
+            state.hasRevealed = msg.round.revealed.includes(state.myId);
+            state.isParticipant = msg.round.participants.includes(state.myId);
+            state.rolledPlayers = new Set(msg.round.rolled);
+            state.revealedPlayers = new Set(msg.round.revealed);
+            if (msg.round.allRevealed && msg.round.allResults) {
+              showPage('game');
+              renderGame();
+              showResults(msg.round.allResults);
+            } else {
+              showPage('game');
+              renderGame();
+            }
+          } else {
+            showPage('lobby');
+            renderLobby();
+          }
+          break;
+
+        case 'player_joined':
+          state.players.push({ id: msg.id, nickname: msg.nickname, connected: true });
+          state.hostId = msg.hostId;
+          renderLobby();
+          showToast(msg.nickname + ' 加入了房间');
+          break;
+
+        case 'player_left':
+          state.players = state.players.filter(p => p.id !== msg.id);
+          state.hostId = msg.hostId;
+          renderLobby();
+          break;
+
+        case 'mode_changed':
+          state.gameMode = msg.mode;
+          state.selectedPlayers = msg.selectedPlayers || [];
+          renderLobby();
+          break;
+
+        case 'round_started':
+          state.round = msg;
+          state.myDice = null;
+          state.hasRolled = false;
+          state.hasRevealed = false;
+          state.isParticipant = msg.participants.some(p => p.id === state.myId);
+          state.rolledPlayers = new Set();
+          state.revealedPlayers = new Set();
+          showPage('game');
+          renderGame();
+          break;
+
+        case 'your_dice':
+          state.myDice = msg.dice;
+          state.hasRolled = true;
+          renderGame();
+          break;
+
+        case 'player_rolled':
+          state.rolledPlayers.add(msg.id);
+          renderGame();
+          break;
+
+        case 'player_revealed':
+          state.revealedPlayers.add(msg.id);
+          renderGame();
+          break;
+
+        case 'all_revealed':
+          showResults(msg.results);
+          break;
+      }
+    }
+
+    // ============ Lobby Rendering ============
+    function renderLobby() {
+      document.getElementById('lobby-room-code').textContent = state.roomCode;
+      
+      const list = document.getElementById('lobby-players');
+      list.innerHTML = state.players.map(p => `
+        <li class="player-item">
+          <span>${escHtml(p.nickname)}</span>
+          ${p.id === state.hostId ? '<span class="host-badge">房主</span>' : ''}
+          ${p.id === state.myId ? '<span class="you-badge">你</span>' : ''}
+          <span class="status-dot ${p.connected ? '' : 'offline'}"></span>
+        </li>
+      `).join('');
+
+      const isHost = state.myId === state.hostId;
+      document.getElementById('host-controls').style.display = isHost ? 'block' : 'none';
+      document.getElementById('guest-hint').style.display = isHost ? 'none' : 'block';
+
+      if (isHost) {
+        document.querySelectorAll('.mode-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.mode === state.gameMode);
+        });
+        render1v1Select();
+
+        const canStart = state.gameMode === 'all'
+          ? state.players.filter(p => p.connected).length >= 2
+          : state.selectedPlayers.length === 2;
+        document.getElementById('btn-start').disabled = !canStart;
+      }
+    }
+
+    function render1v1Select() {
+      const container = document.getElementById('1v1-select');
+      container.style.display = state.gameMode === '1v1' ? 'block' : 'none';
+      if (state.gameMode !== '1v1') return;
+
+      const list = document.getElementById('1v1-player-list');
+      list.innerHTML = state.players.filter(p => p.connected).map(p => `
+        <li class="player-item selectable ${state.selectedPlayers.includes(p.id) ? 'selected' : ''}"
+            onclick="toggle1v1Player('${p.id}')">
+          <span>${escHtml(p.nickname)}</span>
+          ${p.id === state.myId ? '<span class="you-badge">你</span>' : ''}
+        </li>
+      `).join('');
+    }
+
+    function toggle1v1Player(id) {
+      if (state.myId !== state.hostId) return;
+      const idx = state.selectedPlayers.indexOf(id);
+      if (idx >= 0) {
+        state.selectedPlayers.splice(idx, 1);
+      } else if (state.selectedPlayers.length < 2) {
+        state.selectedPlayers.push(id);
+      }
+      sendMsg({ type: 'set_mode', mode: '1v1', players: state.selectedPlayers });
+      renderLobby();
+    }
+
+    function setMode(mode) {
+      if (state.myId !== state.hostId) return;
+      state.gameMode = mode;
+      state.selectedPlayers = [];
+      sendMsg({ type: 'set_mode', mode, players: [] });
+      renderLobby();
+    }
+
+    function startRound() {
+      sendMsg({ type: 'start_round' });
+    }
+
+    function copyRoomCode() {
+      navigator.clipboard?.writeText(state.roomCode).then(() => {
+        showToast('已复制房间号 ' + state.roomCode);
+      }).catch(() => {
+        showToast('房间号: ' + state.roomCode);
+      });
+    }
+
+    // ============ Game Rendering ============
+    function renderGame() {
+      if (!state.round) return;
+      const participants = state.round.participants;
+
+      document.getElementById('game-mode-badge').textContent =
+        state.round.mode === '1v1' ? '1v1' : '所有人';
+
+      // Participant status
+      const statusEl = document.getElementById('participants-status');
+      statusEl.innerHTML = participants.map(p => {
+        const pid = p.id;
+        let statusClass = 'waiting';
+        let statusText = '等待中';
+        if (state.revealedPlayers.has(pid)) {
+          statusClass = 'revealed';
+          statusText = '已开';
+        } else if (state.rolledPlayers.has(pid)) {
+          statusClass = 'rolled';
+          statusText = '已摇';
+        }
+        return `
+          <div class="participant-row">
+            <span>${escHtml(p.nickname)}</span>
+            ${pid === state.myId ? '<span class="you-badge" style="font-size:0.7rem">你</span>' : ''}
+            <span class="p-status ${statusClass}">${statusText}</span>
+          </div>`;
+      }).join('');
+
+      // Show/hide areas based on participation
+      const isParticipant = state.isParticipant;
+      document.getElementById('your-dice-area').style.display = isParticipant ? 'block' : 'none';
+      document.getElementById('spectator-hint').style.display = isParticipant ? 'none' : 'block';
+
+      if (isParticipant) {
+        renderMyDice();
+        const btnRoll = document.getElementById('btn-roll');
+        const btnReveal = document.getElementById('btn-reveal');
+
+        if (state.hasRevealed) {
+          btnRoll.style.display = 'none';
+          btnReveal.style.display = 'none';
+        } else if (state.hasRolled) {
+          btnRoll.style.display = 'none';
+          btnReveal.style.display = 'block';
+        } else {
+          btnRoll.style.display = 'block';
+          btnReveal.style.display = 'none';
+        }
+      }
+    }
+
+    function renderMyDice() {
+      const container = document.getElementById('your-dice');
+      if (state.myDice) {
+        container.innerHTML = state.myDice.map(d => `<div class="die">${diceEmoji(d)}</div>`).join('');
+      } else {
+        container.innerHTML = Array(5).fill('<div class="die hidden-die"></div>').join('');
+      }
+    }
+
+    function rollDice() {
+      if (state.hasRolled) return;
+      const container = document.getElementById('your-dice');
+      container.classList.add('shaking');
+      setTimeout(() => container.classList.remove('shaking'), 600);
+      sendMsg({ type: 'roll' });
+    }
+
+    function revealDice() {
+      if (state.hasRevealed) return;
+      sendMsg({ type: 'reveal' });
+      state.hasRevealed = true;
+      renderGame();
+    }
+
+    function showResults(results) {
+      document.getElementById('results-area').style.display = 'block';
+      document.getElementById('btn-roll').style.display = 'none';
+      document.getElementById('btn-reveal').style.display = 'none';
+
+      const list = document.getElementById('results-list');
+      list.innerHTML = results.map(r => `
+        <div class="result-card">
+          <div class="result-name">
+            ${escHtml(r.nickname)}
+            ${r.id === state.myId ? ' (你)' : ''}
+          </div>
+          <div class="dice-container">
+            ${r.dice.map(d => `<div class="die">${diceEmoji(d)}</div>`).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      // Show next round button only for host
+      document.getElementById('btn-next-round').style.display = 'block';
+    }
+
+    function backToLobby() {
+      state.round = null;
+      state.myDice = null;
+      state.hasRolled = false;
+      state.hasRevealed = false;
+      state.rolledPlayers.clear();
+      state.revealedPlayers.clear();
+      document.getElementById('results-area').style.display = 'none';
+      showPage('lobby');
+      renderLobby();
+    }
+
+    // ============ Helpers ============
+    function diceEmoji(n) {
+      return ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][n] || n;
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function showToast(text) {
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.textContent = text;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2000);
+    }
+
+    // Auto-focus code input
+    document.getElementById('input-code').addEventListener('input', function() {
+      this.value = this.value.replace(/\D/g, '').slice(0, 6);
+    });
+  </script>
+</body>
+</html>

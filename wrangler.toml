@@ -1,0 +1,20 @@
+#:schema node_modules/wrangler/config-schema.json
+
+name = "yaodice"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[durable_objects]
+bindings = [
+  { name = "GAME_ROOM", class_name = "GameRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]
+
+# Assets (static frontend files)
+[assets]
+directory = "./public"
+binding = "ASSETS"
