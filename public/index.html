@@ -344,6 +344,14 @@
       z-index: 100;
       animation: fadeInUp 0.3s ease;
     }
+    #reconnect-toast {
+      border-color: var(--warning);
+      animation: fadeInUp 0.3s ease, reconnect-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes reconnect-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
     @keyframes fadeInUp {
       from { opacity: 0; transform: translateX(-50%) translateY(10px); }
       to { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -471,7 +479,16 @@
 
   <script>
     // ============ State ============
+    const RECONNECT_BASE_DELAY = 1000;
+    const RECONNECT_MAX_DELAY = 30000;
+    const RECONNECT_MAX_ATTEMPTS = 10;
+
     let ws = null;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let intentionalClose = false;
+    let reconnectToken = sessionStorage.getItem('yaodice_reconnect_token');
+
     let state = {
       roomCode: '',
       myId: '',
@@ -561,12 +578,74 @@
     }
 
     // ============ WebSocket ============
+    function saveReconnectToken(token) {
+      reconnectToken = token;
+      if (token) {
+        sessionStorage.setItem('yaodice_reconnect_token', token);
+      } else {
+        sessionStorage.removeItem('yaodice_reconnect_token');
+      }
+    }
+
+    function clearReconnectToken() {
+      reconnectToken = null;
+      sessionStorage.removeItem('yaodice_reconnect_token');
+    }
+
+    let reconnectToastEl = null;
+
+    function showReconnectToast(attempt) {
+      if (!reconnectToastEl) {
+        reconnectToastEl = document.createElement('div');
+        reconnectToastEl.className = 'toast';
+        reconnectToastEl.id = 'reconnect-toast';
+        document.body.appendChild(reconnectToastEl);
+      }
+      reconnectToastEl.textContent = '重新连接中... (' + attempt + '/' + RECONNECT_MAX_ATTEMPTS + ')';
+    }
+
+    function hideReconnectToast() {
+      if (reconnectToastEl) {
+        reconnectToastEl.remove();
+        reconnectToastEl = null;
+      }
+    }
+
+    function attemptReconnect() {
+      if (reconnectAttempt >= RECONNECT_MAX_ATTEMPTS) {
+        showToast('连接已断开，请刷新页面重试');
+        clearReconnectToken();
+        return;
+      }
+
+      reconnectAttempt++;
+      const delay = Math.min(
+        RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempt - 1),
+        RECONNECT_MAX_DELAY
+      );
+
+      showReconnectToast(reconnectAttempt);
+
+      reconnectTimer = setTimeout(() => {
+        connectWebSocket();
+      }, delay);
+    }
+
     function connectWebSocket() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${proto}//${location.host}/ws/${state.roomCode}`);
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'join', nickname: state.nickname }));
+        if (reconnectToken) {
+          ws.send(JSON.stringify({ type: 'reconnect', reconnectToken, nickname: state.nickname }));
+        } else {
+          ws.send(JSON.stringify({ type: 'join', nickname: state.nickname }));
+        }
       };
 
       ws.onmessage = (e) => {
@@ -574,11 +653,17 @@
         handleMessage(msg);
       };
 
-      ws.onclose = () => {
-        // Simple reconnect after 2s
-        setTimeout(() => {
-          if (state.roomCode) connectWebSocket();
-        }, 2000);
+      ws.onerror = () => {
+        // onclose will fire after this, reconnection handled there
+      };
+
+      ws.onclose = (event) => {
+        ws = null;
+
+        if (intentionalClose) return;
+        if (event.code === 1000 || event.code === 4001) return;
+
+        attemptReconnect();
       };
     }
 
@@ -591,11 +676,23 @@
     function handleMessage(msg) {
       switch (msg.type) {
         case 'room_state':
+          const wasReconnecting = reconnectAttempt > 0;
           state.myId = msg.you;
           state.hostId = msg.hostId;
           state.players = msg.players;
           state.gameMode = msg.gameMode || 'all';
           state.selectedPlayers = msg.selectedPlayers || [];
+
+          if (msg.reconnectToken) {
+            saveReconnectToken(msg.reconnectToken);
+          }
+
+          reconnectAttempt = 0;
+          hideReconnectToast();
+
+          if (wasReconnecting) {
+            showToast('已重新连接');
+          }
           if (msg.round) {
             // Rejoin mid-round
             state.round = msg.round;
@@ -627,9 +724,21 @@
           break;
 
         case 'player_left':
-          state.players = state.players.filter(p => p.id !== msg.id);
+          const leftPlayer = state.players.find(p => p.id === msg.id);
+          if (leftPlayer) leftPlayer.connected = false;
           state.hostId = msg.hostId;
           renderLobby();
+          break;
+
+        case 'player_reconnected':
+          const rcPlayer = state.players.find(p => p.id === msg.id);
+          if (rcPlayer) {
+            rcPlayer.connected = true;
+            if (msg.nickname) rcPlayer.nickname = msg.nickname;
+          }
+          state.hostId = msg.hostId;
+          renderLobby();
+          showToast(msg.nickname + ' 重新连接了');
           break;
 
         case 'mode_changed':
@@ -905,6 +1014,13 @@
     // Auto-focus code input
     document.getElementById('input-code').addEventListener('input', function() {
       this.value = this.value.replace(/\D/g, '').slice(0, 6);
+    });
+
+    // Intentional disconnect on page unload
+    window.addEventListener('beforeunload', () => {
+      intentionalClose = true;
+      if (ws) ws.close(1000, 'Page unload');
+      clearReconnectToken();
     });
   </script>
 </body>

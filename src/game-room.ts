@@ -4,6 +4,8 @@ interface Player {
   id: string;
   nickname: string;
   connected: boolean;
+  reconnectToken: string;
+  disconnectedAt: number | null;
 }
 
 interface Round {
@@ -16,6 +18,7 @@ interface Round {
 
 type ClientMessage =
   | { type: 'join'; nickname: string }
+  | { type: 'reconnect'; reconnectToken: string; nickname: string }
   | { type: 'set_mode'; mode: 'all' | '1v1'; players?: string[] }
   | { type: 'start_round' }
   | { type: 'roll' }
@@ -25,6 +28,7 @@ export class GameRoom extends DurableObject {
   private players: Map<string, Player> = new Map();
   private wsToPlayer: Map<WebSocket, string> = new Map();
   private playerToWs: Map<string, WebSocket> = new Map();
+  private tokenToPlayerId: Map<string, string> = new Map();
   private hostId: string | null = null;
   private roomCode: string = '';
   private round: Round | null = null;
@@ -52,6 +56,14 @@ export class GameRoom extends DurableObject {
     }
 
     // WebSocket upgrade
+    if (!this.initialized && url.pathname.startsWith('/ws/')) {
+      const code = url.pathname.split('/').pop();
+      if (code && /^\d{6}$/.test(code)) {
+        this.roomCode = code;
+        this.initialized = true;
+      }
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
@@ -72,6 +84,9 @@ export class GameRoom extends DurableObject {
     switch (msg.type) {
       case 'join':
         this.handleJoin(ws, msg.nickname);
+        break;
+      case 'reconnect':
+        this.handleReconnect(ws, msg.reconnectToken, msg.nickname);
         break;
       case 'set_mode':
         this.handleSetMode(ws, msg.mode, msg.players);
@@ -94,6 +109,7 @@ export class GameRoom extends DurableObject {
       const player = this.players.get(playerId);
       if (player) {
         player.connected = false;
+        player.disconnectedAt = Date.now();
       }
       this.wsToPlayer.delete(ws);
       this.playerToWs.delete(playerId);
@@ -109,15 +125,6 @@ export class GameRoom extends DurableObject {
         id: playerId,
         hostId: this.hostId,
       });
-
-      // Clean up empty rooms
-      const anyConnected = [...this.players.values()].some(p => p.connected);
-      if (!anyConnected) {
-        this.players.clear();
-        this.round = null;
-        this.hostId = null;
-        this.initialized = false;
-      }
     }
   }
 
@@ -127,14 +134,18 @@ export class GameRoom extends DurableObject {
 
   private handleJoin(ws: WebSocket, nickname: string): void {
     const playerId = crypto.randomUUID().slice(0, 8);
+    const reconnectToken = crypto.randomUUID();
 
     const player: Player = {
       id: playerId,
       nickname: nickname || generateNickname(),
       connected: true,
+      reconnectToken,
+      disconnectedAt: null,
     };
 
     this.players.set(playerId, player);
+    this.tokenToPlayerId.set(reconnectToken, playerId);
     this.wsToPlayer.set(ws, playerId);
     this.playerToWs.set(playerId, ws);
 
@@ -146,6 +157,7 @@ export class GameRoom extends DurableObject {
     this.send(ws, {
       type: 'room_state',
       you: playerId,
+      reconnectToken,
       roomCode: this.roomCode,
       hostId: this.hostId,
       players: this.getPlayerList(),
@@ -157,6 +169,56 @@ export class GameRoom extends DurableObject {
     // Notify others
     this.broadcastExcept(ws, {
       type: 'player_joined',
+      id: playerId,
+      nickname: player.nickname,
+      hostId: this.hostId,
+    });
+  }
+
+  private handleReconnect(ws: WebSocket, reconnectToken: string, nickname: string): void {
+    const playerId = this.tokenToPlayerId.get(reconnectToken);
+
+    if (!playerId || !this.players.has(playerId)) {
+      this.handleJoin(ws, nickname);
+      return;
+    }
+
+    const player = this.players.get(playerId)!;
+
+    if (player.connected) {
+      const oldWs = this.playerToWs.get(playerId);
+      if (oldWs) {
+        this.wsToPlayer.delete(oldWs);
+        oldWs.close(4001, 'Replaced by reconnection');
+      }
+    }
+
+    player.connected = true;
+    player.disconnectedAt = null;
+    if (nickname && nickname !== player.nickname) {
+      player.nickname = nickname;
+    }
+    this.wsToPlayer.set(ws, playerId);
+    this.playerToWs.set(playerId, ws);
+
+    if (!this.hostId || ![...this.players.values()].some(p => p.connected && p.id === this.hostId)) {
+      this.hostId = playerId;
+    }
+
+    this.send(ws, {
+      type: 'room_state',
+      you: playerId,
+      reconnectToken,
+      roomCode: this.roomCode,
+      hostId: this.hostId,
+      players: this.getPlayerList(),
+      round: this.getRoundState(playerId),
+      gameMode: this.gameMode,
+      selectedPlayers: this.selectedPlayers,
+    });
+
+    this.broadcastExcept(ws, {
+      type: 'player_reconnected',
       id: playerId,
       nickname: player.nickname,
       hostId: this.hostId,
