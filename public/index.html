@@ -524,6 +524,8 @@
     let reconnectToken = sessionStorage.getItem('yaodice_reconnect_token');
     let lastGeneratedNickname = '';
     let audioContext = null;
+    let audioUnlocked = false;
+    let rollAudioElement = null;
 
     let state = {
       roomCode: '',
@@ -989,19 +991,83 @@
       return audioContext;
     }
 
+    function createRollAudioElement() {
+      if (rollAudioElement) return rollAudioElement;
+
+      const sampleRate = 22050;
+      const duration = 0.65;
+      const sampleCount = Math.floor(sampleRate * duration);
+      const samples = new Int16Array(sampleCount);
+
+      for (let i = 0; i < sampleCount; i++) {
+        const t = i / sampleRate;
+        const fade = Math.max(0, 1 - t / duration);
+        const hit = Math.sin(t * 2 * Math.PI * (260 + Math.sin(t * 70) * 80));
+        const shake = Math.sin(t * 2 * Math.PI * 95) * 0.35 + (Math.random() * 2 - 1) * 0.65;
+        samples[i] = Math.max(-1, Math.min(1, (hit * 0.45 + shake * 0.55) * fade)) * 32767;
+      }
+
+      const headerSize = 44;
+      const buffer = new ArrayBuffer(headerSize + samples.length * 2);
+      const view = new DataView(buffer);
+      const writeString = (offset, value) => {
+        for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+      };
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+      for (let i = 0; i < samples.length; i++) view.setInt16(headerSize + i * 2, samples[i], true);
+
+      rollAudioElement = new Audio(URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' })));
+      rollAudioElement.preload = 'auto';
+      rollAudioElement.volume = 1;
+      return rollAudioElement;
+    }
+
+    function unlockAudio() {
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+
+      const ctx = getAudioContext();
+      if (ctx?.state === 'suspended') ctx.resume().catch(() => {});
+
+      const audio = createRollAudioElement();
+      audio.muted = true;
+      audio.play().then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+      }).catch(() => {
+        audio.muted = false;
+      });
+    }
+
     function playRollSound() {
+      createRollAudioElement().play().catch(() => {});
+
       const ctx = getAudioContext();
       if (!ctx) return;
 
       const play = () => {
         try {
           const now = ctx.currentTime;
-          const duration = 0.5;
+          const duration = 0.65;
           const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * duration), ctx.sampleRate);
           const data = buffer.getChannelData(0);
           for (let i = 0; i < data.length; i++) {
             const fade = 1 - i / data.length;
-            data[i] = (Math.random() * 2 - 1) * fade * 0.55;
+            data[i] = (Math.random() * 2 - 1) * fade * 0.95;
           }
 
           const noise = ctx.createBufferSource();
@@ -1024,17 +1090,17 @@
           noise.start(now);
           noise.stop(now + duration);
 
-          [0, 0.08, 0.16, 0.25, 0.34].forEach((offset) => {
+          [0, 0.08, 0.16, 0.25, 0.34, 0.46].forEach((offset) => {
             const osc = ctx.createOscillator();
             const oscGain = ctx.createGain();
             osc.type = 'triangle';
-            osc.frequency.setValueAtTime(220 + Math.random() * 180, now + offset);
-            oscGain.gain.setValueAtTime(0.16, now + offset);
-            oscGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.05);
+            osc.frequency.setValueAtTime(260 + Math.random() * 240, now + offset);
+            oscGain.gain.setValueAtTime(0.24, now + offset);
+            oscGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.07);
             osc.connect(oscGain);
             oscGain.connect(ctx.destination);
             osc.start(now + offset);
-            osc.stop(now + offset + 0.05);
+            osc.stop(now + offset + 0.07);
           });
         } catch {
           // Ignore audio failures; rolling should still work.
@@ -1048,9 +1114,14 @@
       }
     }
 
+    document.addEventListener('pointerdown', unlockAudio, { once: true });
+    document.addEventListener('touchstart', unlockAudio, { once: true });
+    document.addEventListener('click', unlockAudio, { once: true });
+
     function rollDice() {
       if (state.hasRolled) return;
       if (!sendMsg({ type: 'roll' })) return;
+      if (rollAudioElement) rollAudioElement.currentTime = 0;
       playRollSound();
       const container = document.getElementById('your-dice');
       container.classList.add('shaking');
