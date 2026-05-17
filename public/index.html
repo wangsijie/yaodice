@@ -1233,11 +1233,17 @@
     function renderDiceCounts(results) {
       const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
       const leopardBonus = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+      let wildBonus = 0;
 
       results.forEach(r => {
         r.dice.forEach(d => {
           counts[d] += 1;
         });
+
+        if (r.dice.length > 0 && r.dice.every(d => d === 1)) {
+          wildBonus += 2;
+          return;
+        }
 
         const nonWildDice = r.dice.filter(d => d !== 1);
         const leopardNumber = nonWildDice[0];
@@ -1248,7 +1254,7 @@
         }
       });
 
-      const wildCount = counts[1];
+      const wildCount = counts[1] + wildBonus;
       document.getElementById('dice-counts').innerHTML = `
         <div class="dice-count-note">1 是万能点；豹子额外加点，真豹子额外 +2</div>
         <div class="dice-count-grid">
