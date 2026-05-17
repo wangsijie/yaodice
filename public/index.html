@@ -294,6 +294,37 @@
       margin-bottom: 8px;
       font-size: 0.95rem;
     }
+    .dice-counts {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px;
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 14px;
+    }
+    .dice-count-note {
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      margin-bottom: 10px;
+    }
+    .dice-count-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    .dice-count-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.95rem;
+    }
+    .dice-count-value {
+      color: var(--success);
+      font-weight: 700;
+    }
 
     /* Status indicators in game */
     .participants-status {
@@ -467,6 +498,8 @@
     <!-- Results -->
     <div id="results-area" class="results-area" style="display:none">
       <div class="gap"></div>
+      <div class="game-section-label">📊 数字统计</div>
+      <div id="dice-counts" class="dice-counts"></div>
       <div class="game-section-label">🎉 所有人的骰子</div>
       <div id="results-list"></div>
       <div class="gap"></div>
@@ -482,12 +515,15 @@
     const RECONNECT_BASE_DELAY = 1000;
     const RECONNECT_MAX_DELAY = 30000;
     const RECONNECT_MAX_ATTEMPTS = 10;
+    const NICKNAME_STORAGE_KEY = 'yaodice_custom_nickname';
 
     let ws = null;
     let reconnectTimer = null;
     let reconnectAttempt = 0;
     let intentionalClose = false;
     let reconnectToken = sessionStorage.getItem('yaodice_reconnect_token');
+    let lastGeneratedNickname = '';
+    let audioContext = null;
 
     let state = {
       roomCode: '',
@@ -521,7 +557,7 @@
         const data = await res.json();
         state.roomCode = data.code;
         showPage('nickname');
-        randomNickname();
+        prepareNicknameInput();
       } catch (e) {
         showError('home-error', '创建失败，请重试');
       } finally {
@@ -544,7 +580,7 @@
         }
         state.roomCode = code;
         showPage('nickname');
-        randomNickname();
+        prepareNicknameInput();
       } catch (e) {
         showError('home-error', '加入失败，请重试');
       }
@@ -561,10 +597,21 @@
     const ADJS = ['快乐','神秘','飞翔','淡定','暴躁','优雅','沉默','勇敢','聪明','迷糊','傲娇','佛系','硬核','摸鱼','咸鱼','划水'];
     const NOUNS = ['熊猫','青蛙','企鹅','老虎','兔子','猴子','柴犬','猫咪','鹦鹉','海豚','考拉','狐狸','龙虾','河豚','仓鼠','水獭'];
 
+    function prepareNicknameInput() {
+      const savedNick = localStorage.getItem(NICKNAME_STORAGE_KEY);
+      if (savedNick) {
+        lastGeneratedNickname = '';
+        document.getElementById('input-nickname').value = savedNick;
+      } else {
+        randomNickname();
+      }
+    }
+
     function randomNickname() {
       const a = ADJS[Math.floor(Math.random() * ADJS.length)];
       const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-      document.getElementById('input-nickname').value = a + n;
+      lastGeneratedNickname = a + n;
+      document.getElementById('input-nickname').value = lastGeneratedNickname;
     }
 
     function confirmNickname() {
@@ -574,6 +621,9 @@
         return;
       }
       state.nickname = nick;
+      if (nick !== lastGeneratedNickname) {
+        localStorage.setItem(NICKNAME_STORAGE_KEY, nick);
+      }
       connectWebSocket();
     }
 
@@ -638,26 +688,30 @@
       }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/ws/${state.roomCode}`);
+      const socket = new WebSocket(`${proto}//${location.host}/ws/${state.roomCode}`);
+      ws = socket;
 
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (ws !== socket) return;
         if (reconnectToken) {
-          ws.send(JSON.stringify({ type: 'reconnect', reconnectToken, nickname: state.nickname }));
+          socket.send(JSON.stringify({ type: 'reconnect', reconnectToken, nickname: state.nickname }));
         } else {
-          ws.send(JSON.stringify({ type: 'join', nickname: state.nickname }));
+          socket.send(JSON.stringify({ type: 'join', nickname: state.nickname }));
         }
       };
 
-      ws.onmessage = (e) => {
+      socket.onmessage = (e) => {
+        if (ws !== socket) return;
         const msg = JSON.parse(e.data);
         handleMessage(msg);
       };
 
-      ws.onerror = () => {
+      socket.onerror = () => {
         // onclose will fire after this, reconnection handled there
       };
 
-      ws.onclose = (event) => {
+      socket.onclose = (event) => {
+        if (ws !== socket) return;
         ws = null;
 
         if (intentionalClose) return;
@@ -670,7 +724,14 @@
     function sendMsg(msg) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
+        return true;
       }
+      if (state.roomCode && !reconnectTimer) {
+        showReconnectToast(reconnectAttempt + 1);
+        connectWebSocket();
+      }
+      showToast('连接中，请稍后再试');
+      return false;
     }
 
     function handleMessage(msg) {
@@ -699,7 +760,7 @@
             state.myDice = msg.round.yourDice;
             state.hasRolled = msg.round.rolled.includes(state.myId);
             state.hasRevealed = msg.round.revealed.includes(state.myId);
-            state.isParticipant = msg.round.participants.includes(state.myId);
+            state.isParticipant = msg.round.participants.some(p => p.id === state.myId);
             state.rolledPlayers = new Set(msg.round.rolled);
             state.revealedPlayers = new Set(msg.round.revealed);
             if (msg.round.allRevealed && msg.round.allResults) {
@@ -921,17 +982,84 @@
       }
     }
 
+    function getAudioContext() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      if (!audioContext) audioContext = new AudioContextClass();
+      return audioContext;
+    }
+
+    function playRollSound() {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+
+      const play = () => {
+        try {
+          const now = ctx.currentTime;
+          const duration = 0.5;
+          const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * duration), ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < data.length; i++) {
+            const fade = 1 - i / data.length;
+            data[i] = (Math.random() * 2 - 1) * fade * 0.55;
+          }
+
+          const noise = ctx.createBufferSource();
+          noise.buffer = buffer;
+
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(900, now);
+          filter.frequency.exponentialRampToValueAtTime(180, now + duration);
+          filter.Q.value = 1.4;
+
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.28, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(ctx.destination);
+          noise.start(now);
+          noise.stop(now + duration);
+
+          [0, 0.08, 0.16, 0.25, 0.34].forEach((offset) => {
+            const osc = ctx.createOscillator();
+            const oscGain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(220 + Math.random() * 180, now + offset);
+            oscGain.gain.setValueAtTime(0.16, now + offset);
+            oscGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.05);
+            osc.connect(oscGain);
+            oscGain.connect(ctx.destination);
+            osc.start(now + offset);
+            osc.stop(now + offset + 0.05);
+          });
+        } catch {
+          // Ignore audio failures; rolling should still work.
+        }
+      };
+
+      if (ctx.state === 'suspended') {
+        ctx.resume().then(play).catch(() => {});
+      } else {
+        play();
+      }
+    }
+
     function rollDice() {
       if (state.hasRolled) return;
+      if (!sendMsg({ type: 'roll' })) return;
+      playRollSound();
       const container = document.getElementById('your-dice');
       container.classList.add('shaking');
       setTimeout(() => container.classList.remove('shaking'), 600);
-      sendMsg({ type: 'roll' });
     }
 
     function revealDice() {
       if (state.hasRevealed) return;
-      sendMsg({ type: 'reveal' });
+      if (!sendMsg({ type: 'reveal' })) return;
       state.hasRevealed = true;
       renderGame();
     }
@@ -940,6 +1068,8 @@
       document.getElementById('results-area').style.display = 'block';
       document.getElementById('btn-roll').style.display = 'none';
       document.getElementById('btn-reveal').style.display = 'none';
+
+      renderDiceCounts(results);
 
       const list = document.getElementById('results-list');
       list.innerHTML = results.map(r => `
@@ -962,6 +1092,42 @@
         state.myId === state.hostId ? '1' : 'unset';
       document.getElementById('btn-back-lobby').style.width =
         state.myId === state.hostId ? 'auto' : '100%';
+    }
+
+    function renderDiceCounts(results) {
+      const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+      const leopardBonus = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+
+      results.forEach(r => {
+        r.dice.forEach(d => {
+          counts[d] += 1;
+        });
+
+        const nonWildDice = r.dice.filter(d => d !== 1);
+        const leopardNumber = nonWildDice[0];
+        const isLeopard = leopardNumber && nonWildDice.every(d => d === leopardNumber);
+        if (isLeopard) {
+          const hasWildDice = r.dice.length !== nonWildDice.length;
+          leopardBonus[leopardNumber] += hasWildDice ? 1 : 2;
+        }
+      });
+
+      const wildCount = counts[1];
+      document.getElementById('dice-counts').innerHTML = `
+        <div class="dice-count-note">1 是万能点；豹子额外加点，真豹子额外 +2</div>
+        <div class="dice-count-grid">
+          ${[2, 3, 4, 5, 6].map(n => `
+            <div class="dice-count-item">
+              <span>${n} 点</span>
+              <span class="dice-count-value">${counts[n] + wildCount + leopardBonus[n]} 个</span>
+            </div>
+          `).join('')}
+          <div class="dice-count-item">
+            <span>万能 1</span>
+            <span class="dice-count-value">${wildCount} 个</span>
+          </div>
+        </div>
+      `;
     }
 
     function playAgain() {

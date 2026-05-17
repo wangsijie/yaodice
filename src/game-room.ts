@@ -16,6 +16,26 @@ interface Round {
   revealed: Set<string>;
 }
 
+interface StoredRoom {
+  initialized: boolean;
+  roomCode: string;
+  hostId: string | null;
+  players: Player[];
+  gameMode: 'all' | '1v1';
+  selectedPlayers: string[];
+  round: {
+    mode: 'all' | '1v1';
+    participants: string[];
+    dice: [string, number[]][];
+    rolled: string[];
+    revealed: string[];
+  } | null;
+}
+
+interface WebSocketAttachment {
+  playerId?: string;
+}
+
 type ClientMessage =
   | { type: 'join'; nickname: string }
   | { type: 'reconnect'; reconnectToken: string; nickname: string }
@@ -35,8 +55,10 @@ export class GameRoom extends DurableObject {
   private initialized = false;
   private gameMode: 'all' | '1v1' = 'all';
   private selectedPlayers: string[] = [];
+  private loaded = false;
 
   async fetch(request: Request): Promise<Response> {
+    await this.ensureLoaded();
     const url = new URL(request.url);
 
     if (url.pathname === '/init' && request.method === 'POST') {
@@ -44,6 +66,7 @@ export class GameRoom extends DurableObject {
       if (!this.initialized) {
         this.roomCode = body.code;
         this.initialized = true;
+        await this.saveState();
       }
       return new Response(JSON.stringify({ ok: true }));
     }
@@ -71,7 +94,8 @@ export class GameRoom extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    await this.ensureLoaded();
     if (typeof message !== 'string') return;
 
     let msg: ClientMessage;
@@ -83,35 +107,43 @@ export class GameRoom extends DurableObject {
 
     switch (msg.type) {
       case 'join':
-        this.handleJoin(ws, msg.nickname);
+        await this.handleJoin(ws, msg.nickname);
         break;
       case 'reconnect':
-        this.handleReconnect(ws, msg.reconnectToken, msg.nickname);
+        await this.handleReconnect(ws, msg.reconnectToken, msg.nickname);
         break;
       case 'set_mode':
-        this.handleSetMode(ws, msg.mode, msg.players);
+        await this.handleSetMode(ws, msg.mode, msg.players);
         break;
       case 'start_round':
-        this.handleStartRound(ws);
+        await this.handleStartRound(ws);
         break;
       case 'roll':
-        this.handleRoll(ws);
+        await this.handleRoll(ws);
         break;
       case 'reveal':
-        this.handleReveal(ws);
+        await this.handleReveal(ws);
         break;
     }
   }
 
-  webSocketClose(ws: WebSocket): void {
-    const playerId = this.wsToPlayer.get(ws);
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    await this.ensureLoaded();
+    const attachment = ws.deserializeAttachment() as WebSocketAttachment | undefined;
+    const playerId = this.wsToPlayer.get(ws) ?? attachment?.playerId;
     if (playerId) {
+      const currentWs = this.playerToWs.get(playerId);
+      const isCurrentSocket = !currentWs || currentWs === ws;
+      this.wsToPlayer.delete(ws);
+      ws.serializeAttachment({});
+
+      if (!isCurrentSocket) return;
+
       const player = this.players.get(playerId);
       if (player) {
         player.connected = false;
         player.disconnectedAt = Date.now();
       }
-      this.wsToPlayer.delete(ws);
       this.playerToWs.delete(playerId);
 
       // If host left, assign new host
@@ -125,14 +157,16 @@ export class GameRoom extends DurableObject {
         id: playerId,
         hostId: this.hostId,
       });
+
+      await this.saveState();
     }
   }
 
-  webSocketError(ws: WebSocket): void {
-    this.webSocketClose(ws);
+  async webSocketError(ws: WebSocket): Promise<void> {
+    await this.webSocketClose(ws);
   }
 
-  private handleJoin(ws: WebSocket, nickname: string): void {
+  private async handleJoin(ws: WebSocket, nickname: string): Promise<void> {
     const playerId = crypto.randomUUID().slice(0, 8);
     const reconnectToken = crypto.randomUUID();
 
@@ -148,6 +182,7 @@ export class GameRoom extends DurableObject {
     this.tokenToPlayerId.set(reconnectToken, playerId);
     this.wsToPlayer.set(ws, playerId);
     this.playerToWs.set(playerId, ws);
+    ws.serializeAttachment({ playerId });
 
     if (!this.hostId) {
       this.hostId = playerId;
@@ -173,13 +208,15 @@ export class GameRoom extends DurableObject {
       nickname: player.nickname,
       hostId: this.hostId,
     });
+
+    await this.saveState();
   }
 
-  private handleReconnect(ws: WebSocket, reconnectToken: string, nickname: string): void {
+  private async handleReconnect(ws: WebSocket, reconnectToken: string, nickname: string): Promise<void> {
     const playerId = this.tokenToPlayerId.get(reconnectToken);
 
     if (!playerId || !this.players.has(playerId)) {
-      this.handleJoin(ws, nickname);
+      await this.handleJoin(ws, nickname);
       return;
     }
 
@@ -189,6 +226,7 @@ export class GameRoom extends DurableObject {
       const oldWs = this.playerToWs.get(playerId);
       if (oldWs) {
         this.wsToPlayer.delete(oldWs);
+        oldWs.serializeAttachment({});
         oldWs.close(4001, 'Replaced by reconnection');
       }
     }
@@ -200,6 +238,7 @@ export class GameRoom extends DurableObject {
     }
     this.wsToPlayer.set(ws, playerId);
     this.playerToWs.set(playerId, ws);
+    ws.serializeAttachment({ playerId });
 
     if (!this.hostId || ![...this.players.values()].some(p => p.connected && p.id === this.hostId)) {
       this.hostId = playerId;
@@ -223,9 +262,11 @@ export class GameRoom extends DurableObject {
       nickname: player.nickname,
       hostId: this.hostId,
     });
+
+    await this.saveState();
   }
 
-  private handleSetMode(ws: WebSocket, mode: 'all' | '1v1', players?: string[]): void {
+  private async handleSetMode(ws: WebSocket, mode: 'all' | '1v1', players?: string[]): Promise<void> {
     const playerId = this.wsToPlayer.get(ws);
     if (playerId !== this.hostId) return;
 
@@ -241,9 +282,11 @@ export class GameRoom extends DurableObject {
       mode: this.gameMode,
       selectedPlayers: this.selectedPlayers,
     });
+
+    await this.saveState();
   }
 
-  private handleStartRound(ws: WebSocket): void {
+  private async handleStartRound(ws: WebSocket): Promise<void> {
     const playerId = this.wsToPlayer.get(ws);
     if (playerId !== this.hostId) return;
 
@@ -274,9 +317,11 @@ export class GameRoom extends DurableObject {
         nickname: this.players.get(id)?.nickname || '',
       })),
     });
+
+    await this.saveState();
   }
 
-  private handleRoll(ws: WebSocket): void {
+  private async handleRoll(ws: WebSocket): Promise<void> {
     const playerId = this.wsToPlayer.get(ws);
     if (!playerId || !this.round) return;
     if (!this.round.participants.includes(playerId)) return;
@@ -296,9 +341,11 @@ export class GameRoom extends DurableObject {
       id: playerId,
       allRolled: this.round.rolled.size === this.round.participants.length,
     });
+
+    await this.saveState();
   }
 
-  private handleReveal(ws: WebSocket): void {
+  private async handleReveal(ws: WebSocket): Promise<void> {
     const playerId = this.wsToPlayer.get(ws);
     if (!playerId || !this.round) return;
     if (!this.round.participants.includes(playerId)) return;
@@ -327,6 +374,8 @@ export class GameRoom extends DurableObject {
 
       this.round = null;
     }
+
+    await this.saveState();
   }
 
   private getPlayerList() {
@@ -341,7 +390,10 @@ export class GameRoom extends DurableObject {
     if (!this.round) return null;
     return {
       mode: this.round.mode,
-      participants: this.round.participants,
+      participants: this.round.participants.map(id => ({
+        id,
+        nickname: this.players.get(id)?.nickname || '',
+      })),
       rolled: [...this.round.rolled],
       revealed: [...this.round.revealed],
       yourDice: this.round.dice.get(playerId) || null,
@@ -385,6 +437,64 @@ export class GameRoom extends DurableObject {
         // skip
       }
     }
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (this.loaded) return;
+
+    const stored = await this.ctx.storage.get<StoredRoom>('room');
+    if (stored) {
+      this.initialized = stored.initialized;
+      this.roomCode = stored.roomCode;
+      this.hostId = stored.hostId;
+      this.players = new Map(stored.players.map(player => [player.id, player]));
+      this.tokenToPlayerId = new Map(stored.players.map(player => [player.reconnectToken, player.id]));
+      this.gameMode = stored.gameMode;
+      this.selectedPlayers = stored.selectedPlayers;
+      this.round = stored.round ? {
+        mode: stored.round.mode,
+        participants: stored.round.participants,
+        dice: new Map(stored.round.dice),
+        rolled: new Set(stored.round.rolled),
+        revealed: new Set(stored.round.revealed),
+      } : null;
+    }
+
+    this.wsToPlayer = new Map();
+    this.playerToWs = new Map();
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as WebSocketAttachment | undefined;
+      const playerId = attachment?.playerId;
+      if (!playerId || !this.players.has(playerId)) continue;
+      this.wsToPlayer.set(ws, playerId);
+      this.playerToWs.set(playerId, ws);
+      const player = this.players.get(playerId);
+      if (player) {
+        player.connected = true;
+        player.disconnectedAt = null;
+      }
+    }
+
+    this.loaded = true;
+  }
+
+  private async saveState(): Promise<void> {
+    const stored: StoredRoom = {
+      initialized: this.initialized,
+      roomCode: this.roomCode,
+      hostId: this.hostId,
+      players: [...this.players.values()],
+      gameMode: this.gameMode,
+      selectedPlayers: this.selectedPlayers,
+      round: this.round ? {
+        mode: this.round.mode,
+        participants: this.round.participants,
+        dice: [...this.round.dice.entries()],
+        rolled: [...this.round.rolled],
+        revealed: [...this.round.revealed],
+      } : null,
+    };
+    await this.ctx.storage.put('room', stored);
   }
 }
 
