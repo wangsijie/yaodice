@@ -994,42 +994,7 @@
     function createRollAudioElement() {
       if (rollAudioElement) return rollAudioElement;
 
-      const sampleRate = 22050;
-      const duration = 0.65;
-      const sampleCount = Math.floor(sampleRate * duration);
-      const samples = new Int16Array(sampleCount);
-
-      for (let i = 0; i < sampleCount; i++) {
-        const t = i / sampleRate;
-        const fade = Math.max(0, 1 - t / duration);
-        const hit = Math.sin(t * 2 * Math.PI * (260 + Math.sin(t * 70) * 80));
-        const shake = Math.sin(t * 2 * Math.PI * 95) * 0.35 + (Math.random() * 2 - 1) * 0.65;
-        samples[i] = Math.max(-1, Math.min(1, (hit * 0.45 + shake * 0.55) * fade)) * 32767;
-      }
-
-      const headerSize = 44;
-      const buffer = new ArrayBuffer(headerSize + samples.length * 2);
-      const view = new DataView(buffer);
-      const writeString = (offset, value) => {
-        for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-      };
-
-      writeString(0, 'RIFF');
-      view.setUint32(4, 36 + samples.length * 2, true);
-      writeString(8, 'WAVE');
-      writeString(12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeString(36, 'data');
-      view.setUint32(40, samples.length * 2, true);
-      for (let i = 0; i < samples.length; i++) view.setInt16(headerSize + i * 2, samples[i], true);
-
-      rollAudioElement = new Audio(URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' })));
+      rollAudioElement = new Audio('/dice-roll.mp3');
       rollAudioElement.preload = 'auto';
       rollAudioElement.volume = 1;
       return rollAudioElement;
@@ -1053,9 +1018,7 @@
       });
     }
 
-    function playRollSound() {
-      createRollAudioElement().play().catch(() => {});
-
+    function playFallbackRollSound() {
       const ctx = getAudioContext();
       if (!ctx) return;
 
@@ -1114,6 +1077,12 @@
       }
     }
 
+    function playRollSound() {
+      const audio = createRollAudioElement();
+      audio.currentTime = 0;
+      audio.play().catch(playFallbackRollSound);
+    }
+
     document.addEventListener('pointerdown', unlockAudio, { once: true });
     document.addEventListener('touchstart', unlockAudio, { once: true });
     document.addEventListener('click', unlockAudio, { once: true });
@@ -1121,7 +1090,6 @@
     function rollDice() {
       if (state.hasRolled) return;
       if (!sendMsg({ type: 'roll' })) return;
-      if (rollAudioElement) rollAudioElement.currentTime = 0;
       playRollSound();
       const container = document.getElementById('your-dice');
       container.classList.add('shaking');
