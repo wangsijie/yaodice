@@ -42,7 +42,8 @@ type ClientMessage =
   | { type: 'set_mode'; mode: 'all' | '1v1'; players?: string[] }
   | { type: 'start_round' }
   | { type: 'roll' }
-  | { type: 'reveal' };
+  | { type: 'reveal' }
+  | { type: 'leave' };
 
 export class GameRoom extends DurableObject {
   private players: Map<string, Player> = new Map();
@@ -123,6 +124,9 @@ export class GameRoom extends DurableObject {
         break;
       case 'reveal':
         await this.handleReveal(ws);
+        break;
+      case 'leave':
+        await this.handleLeave(ws);
         break;
     }
   }
@@ -264,6 +268,41 @@ export class GameRoom extends DurableObject {
     });
 
     await this.saveState();
+  }
+
+  private async handleLeave(ws: WebSocket): Promise<void> {
+    const attachment = ws.deserializeAttachment() as WebSocketAttachment | undefined;
+    const playerId = this.wsToPlayer.get(ws) ?? attachment?.playerId;
+    if (!playerId) return;
+
+    const player = this.players.get(playerId);
+    this.wsToPlayer.delete(ws);
+    this.playerToWs.delete(playerId);
+    ws.serializeAttachment({});
+
+    if (!player) return;
+
+    this.players.delete(playerId);
+    this.tokenToPlayerId.delete(player.reconnectToken);
+    this.selectedPlayers = this.selectedPlayers.filter(id => id !== playerId);
+
+    if (this.round?.participants.includes(playerId)) {
+      this.round = null;
+    }
+
+    if (playerId === this.hostId) {
+      const connected = [...this.players.entries()].find(([_, p]) => p.connected);
+      this.hostId = connected ? connected[0] : null;
+    }
+
+    await this.saveState();
+    this.broadcast({
+      type: 'player_left',
+      id: playerId,
+      hostId: this.hostId,
+      left: true,
+    });
+    this.broadcastRoomState();
   }
 
   private async handleSetMode(ws: WebSocket, mode: 'all' | '1v1', players?: string[]): Promise<void> {
@@ -436,6 +475,29 @@ export class GameRoom extends DurableObject {
       } catch {
         // skip
       }
+    }
+  }
+
+  private broadcastRoomState(): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as WebSocketAttachment | undefined;
+      const playerId = this.wsToPlayer.get(ws) ?? attachment?.playerId;
+      if (!playerId) continue;
+
+      const player = this.players.get(playerId);
+      if (!player) continue;
+
+      this.send(ws, {
+        type: 'room_state',
+        you: playerId,
+        reconnectToken: player.reconnectToken,
+        roomCode: this.roomCode,
+        hostId: this.hostId,
+        players: this.getPlayerList(),
+        round: this.getRoundState(playerId),
+        gameMode: this.gameMode,
+        selectedPlayers: this.selectedPlayers,
+      });
     }
   }
 
