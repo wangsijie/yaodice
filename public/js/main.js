@@ -1,6 +1,6 @@
 // Auto-focus code input
 document.getElementById('input-code').addEventListener('input', function() {
-  this.value = this.value.replace(/\D/g, '').slice(0, 6);
+  this.value = this.value.replace(/\D/g, '').slice(0, 4);
 });
 
 function restoreRoomSession() {

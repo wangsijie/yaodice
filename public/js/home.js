@@ -19,8 +19,8 @@ async function createRoom() {
 async function joinRoom() {
   if (roomActionPending) return;
   const code = document.getElementById('input-code').value.trim();
-  if (!/^\d{6}$/.test(code)) {
-    showError('home-error', '请输入6位数字房间号');
+  if (!/^\d{4}$/.test(code)) {
+    showError('home-error', '请输入4位数字房间号');
     return;
   }
   setRoomActionPending(true);

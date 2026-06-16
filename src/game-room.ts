@@ -1,5 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import { isRoomCode } from './room-code';
+
 interface Player {
   id: string;
   nickname: string;
@@ -82,7 +84,7 @@ export class GameRoom extends DurableObject {
     // WebSocket upgrade
     if (!this.initialized && url.pathname.startsWith('/ws/')) {
       const code = url.pathname.split('/').pop();
-      if (code && /^\d{6}$/.test(code)) {
+      if (code && isRoomCode(code)) {
         this.roomCode = code;
         this.initialized = true;
       }

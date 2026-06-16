@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { GameRoom } from './game-room';
+import { generateRoomCode, isRoomCode } from './room-code';
 
 export { GameRoom };
 
@@ -26,7 +27,7 @@ app.post('/api/room/create', async (c) => {
 // Check if room exists
 app.get('/api/room/:code', async (c) => {
   const code = c.req.param('code');
-  if (!/^\d{6}$/.test(code)) {
+  if (!isRoomCode(code)) {
     return c.json({ error: 'Invalid room code' }, 400);
   }
   const id = c.env.GAME_ROOM.idFromName(code);
@@ -39,7 +40,7 @@ app.get('/api/room/:code', async (c) => {
 // WebSocket connection
 app.get('/ws/:code', async (c) => {
   const code = c.req.param('code');
-  if (!/^\d{6}$/.test(code)) {
+  if (!isRoomCode(code)) {
     return c.text('Invalid room code', 400);
   }
   const upgradeHeader = c.req.header('Upgrade');
@@ -55,10 +56,5 @@ app.get('/ws/:code', async (c) => {
 app.get('*', async (c) => {
   return c.env.ASSETS.fetch(c.req.raw);
 });
-
-function generateRoomCode(): string {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  return code;
-}
 
 export default app;

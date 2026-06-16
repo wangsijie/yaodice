@@ -4,7 +4,7 @@ function loadRoomSession() {
     const raw = localStorage.getItem(ROOM_SESSION_STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || typeof data.roomCode !== 'string' || !/^\d{6}$/.test(data.roomCode)) {
+    if (!data || typeof data.roomCode !== 'string' || !/^\d{4}$/.test(data.roomCode)) {
       localStorage.removeItem(ROOM_SESSION_STORAGE_KEY);
       return null;
     }

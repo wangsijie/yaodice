@@ -185,7 +185,7 @@ describe('GameRoom multiplayer integration', () => {
   });
 
   it('restores the same player view after disconnecting and reconnecting mid-round', async () => {
-    const roomCode = '772201';
+    const roomCode = '7722';
     const alice = await joinRoom(roomCode, 'Alice');
     const bob = await joinRoom(roomCode, 'Bob');
 
@@ -326,7 +326,7 @@ async function createRoom(): Promise<string> {
   expect(response.status).toBe(200);
 
   const data = (await response.json()) as { code: string };
-  expect(data.code).toMatch(/^\d{6}$/);
+  expect(data.code).toMatch(/^\d{4}$/);
   return data.code;
 }
 
