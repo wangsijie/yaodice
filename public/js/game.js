@@ -216,6 +216,24 @@ function showResults(results) {
   document.getElementById('btn-back-lobby').style.width = 'auto';
 }
 
+function isViewingResults() {
+  const resultsArea = document.getElementById('results-area');
+  return Boolean(lastRevealedResults && resultsArea && resultsArea.style.display !== 'none');
+}
+
+function clearCurrentRound() {
+  resetDiceRollAnimation();
+  state.round = null;
+  state.myDice = null;
+  state.pendingDice = null;
+  state.isRollingDice = false;
+  state.hasRolled = false;
+  state.hasRevealed = false;
+  state.isParticipant = false;
+  state.rolledPlayers.clear();
+  state.revealedPlayers.clear();
+}
+
 function setDiceCountsOnesMode(mode) {
   if (!lastRevealedResults || diceCountsOnesMode === mode) return;
   diceCountsOnesMode = mode;
@@ -308,16 +326,33 @@ function calculateDiceTotals(results, onesAreWild) {
 }
 
 function playAgain() {
-  if (!sendMsg({ type: 'start_round' })) return;
+  if (state.round) {
+    enterCurrentRoundAndRoll();
+    return;
+  }
+
   autoRollAfterRoundStart = true;
-  document.getElementById('results-area').style.display = 'none';
-  lastRevealedResults = null;
-  diceCountsOnesMode = 'wild';
+  if (!sendMsg({ type: 'start_round' })) {
+    autoRollAfterRoundStart = false;
+  }
 }
 
 function maybeAutoRollAfterRoundStart() {
-  if (!autoRollAfterRoundStart) return;
+  if (!autoRollAfterRoundStart) return false;
   autoRollAfterRoundStart = false;
+  enterCurrentRoundAndRoll();
+  return true;
+}
+
+function enterCurrentRoundAndRoll() {
+  if (!state.round) return;
+
+  document.getElementById('results-area').style.display = 'none';
+  lastRevealedResults = null;
+  diceCountsOnesMode = 'wild';
+  showPage('game');
+  renderGame();
+
   if (state.isParticipant) {
     rollDice();
   }

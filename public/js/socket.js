@@ -191,6 +191,9 @@ function handleMessage(msg) {
 
     case 'round_started':
       if (typeof resetDiceRollAnimation === 'function') resetDiceRollAnimation();
+      const keepShowingResults = typeof isViewingResults === 'function'
+        && isViewingResults()
+        && !autoRollAfterRoundStart;
       state.round = msg;
       state.myDice = null;
       state.pendingDice = null;
@@ -200,11 +203,15 @@ function handleMessage(msg) {
       state.isParticipant = msg.participants.some(p => p.id === state.myId);
       state.rolledPlayers = new Set();
       state.revealedPlayers = new Set();
-      document.getElementById('results-area').style.display = 'none';
-      showPage('game');
-      renderGame();
-      if (typeof maybeAutoRollAfterRoundStart === 'function') {
-        maybeAutoRollAfterRoundStart();
+
+      if (keepShowingResults) {
+        showPage('game');
+      } else if (typeof maybeAutoRollAfterRoundStart === 'function' && maybeAutoRollAfterRoundStart()) {
+        // The local player clicked "play again", so entering the new round handled rendering and rolling.
+      } else {
+        document.getElementById('results-area').style.display = 'none';
+        showPage('game');
+        renderGame();
       }
       break;
 
@@ -214,16 +221,28 @@ function handleMessage(msg) {
 
     case 'player_rolled':
       state.rolledPlayers.add(msg.id);
-      renderGame();
+      if (typeof isViewingResults !== 'function' || !isViewingResults()) {
+        renderGame();
+      }
       break;
 
     case 'player_revealed':
       state.revealedPlayers.add(msg.id);
-      renderGame();
+      if (typeof isViewingResults !== 'function' || !isViewingResults()) {
+        renderGame();
+      }
       break;
 
     case 'all_revealed':
-      showResults(msg.results);
+      const wasViewingResults = typeof isViewingResults === 'function' && isViewingResults();
+      if (typeof clearCurrentRound === 'function') {
+        clearCurrentRound();
+      } else {
+        state.round = null;
+      }
+      if (!wasViewingResults) {
+        showResults(msg.results);
+      }
       break;
   }
 }
