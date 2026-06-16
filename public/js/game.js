@@ -1,4 +1,13 @@
 // ============ Game Rendering ============
+const ROLL_ANIMATION_DURATION_MS = 1600;
+const ROLL_ANIMATION_STEP_MS = 70;
+
+let rollAnimationInterval = null;
+let rollAnimationFinishTimer = null;
+let rollAnimationStartedAt = 0;
+let rollingDiceValues = [];
+let rollingDiceTick = 0;
+
 function renderGame() {
   if (!state.round) return;
   const participants = state.round.participants;
@@ -40,6 +49,9 @@ function renderGame() {
     if (state.hasRevealed) {
       btnRoll.style.display = 'none';
       btnReveal.style.display = 'none';
+    } else if (state.isRollingDice) {
+      btnRoll.style.display = 'none';
+      btnReveal.style.display = 'none';
     } else if (state.hasRolled) {
       btnRoll.style.display = 'none';
       btnReveal.style.display = 'block';
@@ -52,6 +64,10 @@ function renderGame() {
 
 function renderMyDice() {
   const container = document.getElementById('your-dice');
+  if (state.isRollingDice) {
+    renderRollingDice();
+    return;
+  }
   if (state.myDice) {
     container.innerHTML = state.myDice.map(d => diceHTML(d)).join('');
   } else {
@@ -60,12 +76,106 @@ function renderMyDice() {
 }
 
 function rollDice() {
-  if (state.hasRolled) return;
+  if (state.hasRolled || state.isRollingDice) return;
   if (!sendMsg({ type: 'roll' })) return;
+  beginDiceRollAnimation();
   playRollSound();
+}
+
+function receiveMyDice(dice) {
+  state.pendingDice = dice;
+  state.hasRolled = true;
+
+  if (!state.isRollingDice) {
+    finishDiceRollAnimation();
+    return;
+  }
+
+  const elapsed = Date.now() - rollAnimationStartedAt;
+  if (elapsed >= ROLL_ANIMATION_DURATION_MS) {
+    finishDiceRollAnimation();
+  }
+}
+
+function beginDiceRollAnimation() {
+  resetDiceRollAnimation();
+
+  state.isRollingDice = true;
+  state.pendingDice = null;
+  rollingDiceValues = Array.from({ length: 5 }, () => randomDie());
+  rollingDiceTick = 0;
+  rollAnimationStartedAt = Date.now();
+
   const container = document.getElementById('your-dice');
-  container.classList.add('shaking');
-  setTimeout(() => container.classList.remove('shaking'), 600);
+  container.classList.add('rolling');
+  renderRollingDice();
+  renderGame();
+
+  rollAnimationInterval = setInterval(() => {
+    const activeIndex = rollingDiceTick % rollingDiceValues.length;
+    rollingDiceValues[activeIndex] = randomDie(rollingDiceValues[activeIndex]);
+    rollingDiceTick++;
+    renderRollingDice(activeIndex);
+  }, ROLL_ANIMATION_STEP_MS);
+
+  rollAnimationFinishTimer = setTimeout(() => {
+    if (state.pendingDice) finishDiceRollAnimation();
+  }, ROLL_ANIMATION_DURATION_MS);
+}
+
+function finishDiceRollAnimation() {
+  clearDiceRollTimers();
+
+  if (state.pendingDice) {
+    state.myDice = state.pendingDice;
+    state.pendingDice = null;
+  }
+
+  state.isRollingDice = false;
+  const container = document.getElementById('your-dice');
+  container.classList.remove('rolling');
+  renderGame();
+}
+
+function resetDiceRollAnimation() {
+  clearDiceRollTimers();
+  state.pendingDice = null;
+  state.isRollingDice = false;
+  rollingDiceValues = [];
+  rollingDiceTick = 0;
+
+  const container = document.getElementById('your-dice');
+  if (container) container.classList.remove('rolling');
+}
+
+function clearDiceRollTimers() {
+  if (rollAnimationInterval) {
+    clearInterval(rollAnimationInterval);
+    rollAnimationInterval = null;
+  }
+  if (rollAnimationFinishTimer) {
+    clearTimeout(rollAnimationFinishTimer);
+    rollAnimationFinishTimer = null;
+  }
+}
+
+function renderRollingDice(activeIndex = rollingDiceTick % 5) {
+  const container = document.getElementById('your-dice');
+  if (!container) return;
+
+  if (rollingDiceValues.length !== 5) {
+    rollingDiceValues = Array.from({ length: 5 }, () => randomDie());
+  }
+
+  container.innerHTML = rollingDiceValues.map((d, i) =>
+    diceHTML(d).replace('class="die ', `class="die rolling-die ${i === activeIndex ? 'rolling-active ' : ''}`)
+  ).join('');
+}
+
+function randomDie(previous) {
+  let next = Math.floor(Math.random() * 6) + 1;
+  if (previous && next === previous) next = (next % 6) + 1;
+  return next;
 }
 
 function revealDice() {
@@ -153,8 +263,10 @@ function playAgain() {
 }
 
 function backToLobby() {
+  resetDiceRollAnimation();
   state.round = null;
   state.myDice = null;
+  state.pendingDice = null;
   state.hasRolled = false;
   state.hasRevealed = false;
   state.rolledPlayers.clear();

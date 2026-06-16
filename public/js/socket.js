@@ -190,8 +190,11 @@ function handleMessage(msg) {
       break;
 
     case 'round_started':
+      if (typeof resetDiceRollAnimation === 'function') resetDiceRollAnimation();
       state.round = msg;
       state.myDice = null;
+      state.pendingDice = null;
+      state.isRollingDice = false;
       state.hasRolled = false;
       state.hasRevealed = false;
       state.isParticipant = msg.participants.some(p => p.id === state.myId);
@@ -203,9 +206,7 @@ function handleMessage(msg) {
       break;
 
     case 'your_dice':
-      state.myDice = msg.dice;
-      state.hasRolled = true;
-      renderGame();
+      receiveMyDice(msg.dice);
       break;
 
     case 'player_rolled':
