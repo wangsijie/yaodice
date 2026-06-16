@@ -318,6 +318,29 @@ input::placeholder { color: var(--text-dim); }
   max-width: 320px;
   margin-bottom: 14px;
 }
+.dice-rule-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px;
+  margin-bottom: 10px;
+}
+.dice-rule-tab {
+  max-width: none;
+  width: 100%;
+  padding: 8px 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.dice-rule-tab.active {
+  background: var(--primary);
+  color: #fff;
+}
 .dice-count-note {
   color: var(--text-dim);
   font-size: 0.8rem;

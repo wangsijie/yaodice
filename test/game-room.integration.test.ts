@@ -100,6 +100,7 @@ type ClientMessage =
 
 type DiceTotals = {
   wild: number;
+  1?: number;
   2: number;
   3: number;
   4: number;
@@ -287,6 +288,35 @@ describe('GameRoom multiplayer integration', () => {
   ])('calculates dice totals for $name', ({ dice, expected }) => {
     expect(calculateDiceTotals(resultsFromDice(dice))).toEqual(expected);
   });
+
+  it.each([
+    {
+      name: 'single one is counted only as one after one was called',
+      dice: [[1, 2, 3, 4, 5]],
+      expected: { wild: 0, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 0 },
+    },
+    {
+      name: 'all ones become a true leopard of ones after one was called',
+      dice: [[1, 1, 1, 1, 1]],
+      expected: { wild: 0, 1: 7, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+    },
+    {
+      name: 'mixed ones no longer complete leopard after one was called',
+      dice: [[1, 4, 4, 4, 4]],
+      expected: { wild: 0, 1: 1, 2: 0, 3: 0, 4: 4, 5: 0, 6: 0 },
+    },
+    {
+      name: 'multiple players count ones separately after one was called',
+      dice: [
+        [1, 1, 1, 1, 1],
+        [2, 2, 2, 1, 1],
+        [3, 4, 5, 6, 2],
+      ],
+      expected: { wild: 0, 1: 9, 2: 4, 3: 1, 4: 1, 5: 1, 6: 1 },
+    },
+  ])('calculates dice totals for $name', ({ dice, expected }) => {
+    expect(calculateDiceTotals(resultsFromDice(dice), false)).toEqual(expected);
+  });
 });
 
 async function createRoom(): Promise<string> {
@@ -371,14 +401,22 @@ function mockDiceRolls(...rolls: number[][]): void {
   });
 }
 
-function calculateDiceTotals(results: RevealedResult[]): DiceTotals {
+function calculateDiceTotals(results: RevealedResult[], onesAreWild = true): DiceTotals {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-  const leopardBonus = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const leopardBonus = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
   let wildBonus = 0;
 
   for (const result of results) {
     for (const die of result.dice) {
       counts[die as keyof typeof counts] += 1;
+    }
+
+    if (!onesAreWild) {
+      const leopardNumber = result.dice[0] as keyof typeof leopardBonus | undefined;
+      if (leopardNumber && result.dice.every((die) => die === leopardNumber)) {
+        leopardBonus[leopardNumber] += 2;
+      }
+      continue;
     }
 
     if (result.dice.length > 0 && result.dice.every((die) => die === 1)) {
@@ -396,6 +434,18 @@ function calculateDiceTotals(results: RevealedResult[]): DiceTotals {
   }
 
   const wild = counts[1] + wildBonus;
+  if (!onesAreWild) {
+    return {
+      wild: 0,
+      1: counts[1] + leopardBonus[1],
+      2: counts[2] + leopardBonus[2],
+      3: counts[3] + leopardBonus[3],
+      4: counts[4] + leopardBonus[4],
+      5: counts[5] + leopardBonus[5],
+      6: counts[6] + leopardBonus[6],
+    };
+  }
+
   return {
     wild,
     2: counts[2] + wild + leopardBonus[2],

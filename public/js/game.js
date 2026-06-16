@@ -7,6 +7,8 @@ let rollAnimationFinishTimer = null;
 let rollAnimationStartedAt = 0;
 let rollingDiceValues = [];
 let rollingDiceTick = 0;
+let lastRevealedResults = null;
+let diceCountsOnesMode = 'wild';
 
 function renderGame() {
   if (!state.round) return;
@@ -190,6 +192,8 @@ function showResults(results) {
   document.getElementById('btn-roll').style.display = 'none';
   document.getElementById('btn-reveal').style.display = 'none';
 
+  lastRevealedResults = results;
+  diceCountsOnesMode = 'wild';
   renderDiceCounts(results);
 
   const list = document.getElementById('results-list');
@@ -215,15 +219,70 @@ function showResults(results) {
     state.myId === state.hostId ? 'auto' : '100%';
 }
 
+function setDiceCountsOnesMode(mode) {
+  if (!lastRevealedResults || diceCountsOnesMode === mode) return;
+  diceCountsOnesMode = mode;
+  renderDiceCounts(lastRevealedResults);
+}
+
 function renderDiceCounts(results) {
+  const onesAreWild = diceCountsOnesMode === 'wild';
+  const totals = calculateDiceTotals(results, onesAreWild);
+  const diceNumbers = [2, 3, 4, 5, 6];
+  const note = onesAreWild
+    ? '1 是万能点；豹子额外加点，真豹子额外 +2'
+    : '1 已被叫过：1 只算普通点数，不再加到其他点数';
+
+  document.getElementById('dice-counts').innerHTML = `
+    <div class="dice-rule-tabs" role="tablist" aria-label="1 点规则">
+      <button
+        type="button"
+        class="dice-rule-tab ${onesAreWild ? 'active' : ''}"
+        role="tab"
+        aria-selected="${onesAreWild}"
+        onclick="setDiceCountsOnesMode('wild')"
+      >1 是万能</button>
+      <button
+        type="button"
+        class="dice-rule-tab ${!onesAreWild ? 'active' : ''}"
+        role="tab"
+        aria-selected="${!onesAreWild}"
+        onclick="setDiceCountsOnesMode('plain')"
+      >1 已被叫</button>
+    </div>
+    <div class="dice-count-note">${note}</div>
+    <div class="dice-count-grid">
+      ${diceNumbers.map(n => `
+        <div class="dice-count-item">
+          <span>${n} 点</span>
+          <span class="dice-count-value">${totals[n]} 个</span>
+        </div>
+      `).join('')}
+      <div class="dice-count-item">
+        <span>${onesAreWild ? '万能 1' : '1 点'}</span>
+        <span class="dice-count-value">${onesAreWild ? totals.wild : totals[1]} 个</span>
+      </div>
+    </div>
+  `;
+}
+
+function calculateDiceTotals(results, onesAreWild) {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-  const leopardBonus = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const leopardBonus = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
   let wildBonus = 0;
 
   results.forEach(r => {
     r.dice.forEach(d => {
       counts[d] += 1;
     });
+
+    if (!onesAreWild) {
+      const leopardNumber = r.dice[0];
+      if (r.dice.length > 0 && r.dice.every(d => d === leopardNumber)) {
+        leopardBonus[leopardNumber] += 2;
+      }
+      return;
+    }
 
     if (r.dice.length > 0 && r.dice.every(d => d === 1)) {
       wildBonus += 2;
@@ -240,25 +299,21 @@ function renderDiceCounts(results) {
   });
 
   const wildCount = counts[1] + wildBonus;
-  document.getElementById('dice-counts').innerHTML = `
-    <div class="dice-count-note">1 是万能点；豹子额外加点，真豹子额外 +2</div>
-    <div class="dice-count-grid">
-      ${[2, 3, 4, 5, 6].map(n => `
-        <div class="dice-count-item">
-          <span>${n} 点</span>
-          <span class="dice-count-value">${counts[n] + wildCount + leopardBonus[n]} 个</span>
-        </div>
-      `).join('')}
-      <div class="dice-count-item">
-        <span>万能 1</span>
-        <span class="dice-count-value">${wildCount} 个</span>
-      </div>
-    </div>
-  `;
+  return {
+    wild: onesAreWild ? wildCount : 0,
+    1: onesAreWild ? counts[1] : counts[1] + leopardBonus[1],
+    2: counts[2] + (onesAreWild ? wildCount : 0) + leopardBonus[2],
+    3: counts[3] + (onesAreWild ? wildCount : 0) + leopardBonus[3],
+    4: counts[4] + (onesAreWild ? wildCount : 0) + leopardBonus[4],
+    5: counts[5] + (onesAreWild ? wildCount : 0) + leopardBonus[5],
+    6: counts[6] + (onesAreWild ? wildCount : 0) + leopardBonus[6],
+  };
 }
 
 function playAgain() {
   document.getElementById('results-area').style.display = 'none';
+  lastRevealedResults = null;
+  diceCountsOnesMode = 'wild';
   sendMsg({ type: 'start_round' });
 }
 
@@ -271,6 +326,8 @@ function backToLobby() {
   state.hasRevealed = false;
   state.rolledPlayers.clear();
   state.revealedPlayers.clear();
+  lastRevealedResults = null;
+  diceCountsOnesMode = 'wild';
   document.getElementById('results-area').style.display = 'none';
   showPage('lobby');
   renderLobby();
