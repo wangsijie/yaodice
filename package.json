@@ -2,10 +2,13 @@
   "name": "yaodice",
   "version": "1.0.0",
   "description": "Multiplayer dice game for Chinese drinking parties",
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "test": "vitest run --max-workers=1 --no-isolate",
+    "test:watch": "vitest --max-workers=1 --no-isolate"
   },
   "keywords": [],
   "author": "",
@@ -15,9 +18,11 @@
     "hono": "^4.12.12"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
     "@cloudflare/workers-types": "^4.20260408.1",
     "@types/node": "^25.5.2",
     "typescript": "^6.0.2",
+    "vitest": "^4.1.8",
     "wrangler": "^4.81.0"
   }
 }
