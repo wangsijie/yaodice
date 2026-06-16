@@ -203,6 +203,9 @@ function handleMessage(msg) {
       document.getElementById('results-area').style.display = 'none';
       showPage('game');
       renderGame();
+      if (typeof maybeAutoRollAfterRoundStart === 'function') {
+        maybeAutoRollAfterRoundStart();
+      }
       break;
 
     case 'your_dice':

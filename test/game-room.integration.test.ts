@@ -184,6 +184,53 @@ describe('GameRoom multiplayer integration', () => {
     }
   });
 
+  it('lets a non-host start and roll a rematch only after results are shown', async () => {
+    const roomCode = '8844';
+    const alice = await joinRoom(roomCode, 'Alice');
+    const bob = await joinRoom(roomCode, 'Bob');
+    await alice.waitFor('player_joined', (msg) => msg.nickname === 'Bob');
+
+    const aliceLobbyMark = alice.mark();
+    const bobLobbyMark = bob.mark();
+    bob.send({ type: 'start_round' });
+    await waitForQuietPeriod();
+
+    expect(alice.messagesSince(aliceLobbyMark).some((msg) => msg.type === 'round_started')).toBe(
+      false,
+    );
+    expect(bob.messagesSince(bobLobbyMark).some((msg) => msg.type === 'round_started')).toBe(
+      false,
+    );
+
+    alice.send({ type: 'start_round' });
+    await Promise.all([alice.waitFor('round_started'), bob.waitFor('round_started')]);
+
+    mockDiceRolls([1, 2, 3, 4, 5], [6, 6, 6, 6, 6]);
+    await rollAndAssertPerspective(alice, [alice, bob], [1, 2, 3, 4, 5], false);
+    await rollAndAssertPerspective(bob, [alice, bob], [6, 6, 6, 6, 6], true);
+
+    alice.send({ type: 'reveal' });
+    bob.send({ type: 'reveal' });
+    await Promise.all([alice.waitFor('all_revealed'), bob.waitFor('all_revealed')]);
+
+    const aliceRematchMark = alice.mark();
+    const bobRematchMark = bob.mark();
+    bob.send({ type: 'start_round' });
+
+    const [aliceRematch, bobRematch] = await Promise.all([
+      alice.waitFor('round_started', undefined, aliceRematchMark),
+      bob.waitFor('round_started', undefined, bobRematchMark),
+    ]);
+
+    for (const msg of [aliceRematch, bobRematch]) {
+      expect(msg.mode).toBe('all');
+      expect(msg.participants.map((participant) => participant.id)).toEqual([alice.id, bob.id]);
+    }
+
+    mockDiceRolls([5, 5, 5, 5, 5]);
+    await rollAndAssertPerspective(bob, [alice, bob], [5, 5, 5, 5, 5], false);
+  });
+
   it('restores the same player view after disconnecting and reconnecting mid-round', async () => {
     const roomCode = '7722';
     const alice = await joinRoom(roomCode, 'Alice');
@@ -466,6 +513,10 @@ function resultsFromDice(diceByPlayer: number[][]): RevealedResult[] {
 
 function sameDice(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function waitForQuietPeriod(ms = 50): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class RoomClient {

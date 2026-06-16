@@ -9,6 +9,7 @@ let rollingDiceValues = [];
 let rollingDiceTick = 0;
 let lastRevealedResults = null;
 let diceCountsOnesMode = 'wild';
+let autoRollAfterRoundStart = false;
 
 function renderGame() {
   if (!state.round) return;
@@ -210,13 +211,9 @@ function showResults(results) {
   `).join('');
 
   document.getElementById('results-buttons').style.display = 'flex';
-  // Only host can start next round directly
-  document.getElementById('btn-play-again').style.display =
-    state.myId === state.hostId ? 'block' : 'none';
-  document.getElementById('btn-back-lobby').style.flex =
-    state.myId === state.hostId ? '1' : 'unset';
-  document.getElementById('btn-back-lobby').style.width =
-    state.myId === state.hostId ? 'auto' : '100%';
+  document.getElementById('btn-play-again').style.display = 'block';
+  document.getElementById('btn-back-lobby').style.flex = '1';
+  document.getElementById('btn-back-lobby').style.width = 'auto';
 }
 
 function setDiceCountsOnesMode(mode) {
@@ -311,14 +308,24 @@ function calculateDiceTotals(results, onesAreWild) {
 }
 
 function playAgain() {
+  if (!sendMsg({ type: 'start_round' })) return;
+  autoRollAfterRoundStart = true;
   document.getElementById('results-area').style.display = 'none';
   lastRevealedResults = null;
   diceCountsOnesMode = 'wild';
-  sendMsg({ type: 'start_round' });
+}
+
+function maybeAutoRollAfterRoundStart() {
+  if (!autoRollAfterRoundStart) return;
+  autoRollAfterRoundStart = false;
+  if (state.isParticipant) {
+    rollDice();
+  }
 }
 
 function backToLobby() {
   resetDiceRollAnimation();
+  autoRollAfterRoundStart = false;
   state.round = null;
   state.myDice = null;
   state.pendingDice = null;

@@ -18,10 +18,13 @@ interface Round {
   revealed: Set<string>;
 }
 
+type RoomPhase = 'lobby' | 'playing' | 'results';
+
 interface StoredRoom {
   initialized: boolean;
   roomCode: string;
   hostId: string | null;
+  phase?: RoomPhase;
   players: Player[];
   gameMode: 'all' | '1v1';
   selectedPlayers: string[];
@@ -58,6 +61,7 @@ export class GameRoom extends DurableObject {
   private initialized = false;
   private gameMode: 'all' | '1v1' = 'all';
   private selectedPlayers: string[] = [];
+  private phase: RoomPhase = 'lobby';
   private loaded = false;
 
   async fetch(request: Request): Promise<Response> {
@@ -302,6 +306,7 @@ export class GameRoom extends DurableObject {
 
     if (this.round?.participants.includes(playerId)) {
       this.round = null;
+      this.phase = 'lobby';
     }
 
     if (playerId === this.hostId) {
@@ -324,6 +329,9 @@ export class GameRoom extends DurableObject {
     if (playerId !== this.hostId) return;
 
     this.gameMode = mode;
+    if (!this.round) {
+      this.phase = 'lobby';
+    }
     if (mode === '1v1' && players) {
       this.selectedPlayers = players.filter(id => this.players.has(id));
     } else {
@@ -341,7 +349,14 @@ export class GameRoom extends DurableObject {
 
   private async handleStartRound(ws: WebSocket): Promise<void> {
     const playerId = this.wsToPlayer.get(ws);
-    if (playerId !== this.hostId) return;
+    if (!playerId) return;
+
+    const player = this.players.get(playerId);
+    if (!player?.connected) return;
+    if (this.round) return;
+
+    const canStartRound = playerId === this.hostId || this.phase === 'results';
+    if (!canStartRound) return;
 
     let participants: string[];
     if (this.gameMode === '1v1' && this.selectedPlayers.length === 2) {
@@ -361,6 +376,7 @@ export class GameRoom extends DurableObject {
       rolled: new Set(),
       revealed: new Set(),
     };
+    this.phase = 'playing';
 
     this.broadcast({
       type: 'round_started',
@@ -426,6 +442,7 @@ export class GameRoom extends DurableObject {
       });
 
       this.round = null;
+      this.phase = 'results';
     }
 
     await this.saveState();
@@ -552,6 +569,7 @@ export class GameRoom extends DurableObject {
       this.tokenToPlayerId = new Map(stored.players.map(player => [player.reconnectToken, player.id]));
       this.gameMode = stored.gameMode;
       this.selectedPlayers = stored.selectedPlayers;
+      this.phase = stored.phase ?? (stored.round ? 'playing' : 'lobby');
       this.round = stored.round ? {
         mode: stored.round.mode,
         participants: stored.round.participants,
@@ -584,6 +602,7 @@ export class GameRoom extends DurableObject {
       initialized: this.initialized,
       roomCode: this.roomCode,
       hostId: this.hostId,
+      phase: this.phase,
       players: [...this.players.values()],
       gameMode: this.gameMode,
       selectedPlayers: this.selectedPlayers,
