@@ -171,12 +171,18 @@ export class GameRoom extends DurableObject {
   }
 
   private async handleJoin(ws: WebSocket, nickname: string): Promise<void> {
+    const normalizedNickname = normalizeNickname(nickname);
+    if (normalizedNickname && this.isNicknameTaken(normalizedNickname)) {
+      this.rejectJoin(ws, 'nickname_taken', '这个昵称已经在房间里了，请换一个');
+      return;
+    }
+
     const playerId = crypto.randomUUID().slice(0, 8);
     const reconnectToken = crypto.randomUUID();
 
     const player: Player = {
       id: playerId,
-      nickname: nickname || generateNickname(),
+      nickname: normalizedNickname || this.generateAvailableNickname(),
       connected: true,
       reconnectToken,
       disconnectedAt: null,
@@ -225,6 +231,15 @@ export class GameRoom extends DurableObject {
     }
 
     const player = this.players.get(playerId)!;
+    const normalizedNickname = normalizeNickname(nickname);
+
+    if (normalizedNickname && normalizedNickname !== player.nickname) {
+      if (this.isNicknameTaken(normalizedNickname, playerId)) {
+        this.rejectJoin(ws, 'nickname_taken', '这个昵称已经在房间里了，请换一个');
+        return;
+      }
+      player.nickname = normalizedNickname;
+    }
 
     if (player.connected) {
       const oldWs = this.playerToWs.get(playerId);
@@ -237,9 +252,6 @@ export class GameRoom extends DurableObject {
 
     player.connected = true;
     player.disconnectedAt = null;
-    if (nickname && nickname !== player.nickname) {
-      player.nickname = nickname;
-    }
     this.wsToPlayer.set(ws, playerId);
     this.playerToWs.set(playerId, ws);
     ws.serializeAttachment({ playerId });
@@ -501,6 +513,31 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private isNicknameTaken(nickname: string, exceptPlayerId?: string): boolean {
+    return [...this.players.entries()].some(([id, player]) =>
+      id !== exceptPlayerId && player.nickname === nickname
+    );
+  }
+
+  private generateAvailableNickname(): string {
+    for (let i = 0; i < 20; i++) {
+      const nickname = generateNickname();
+      if (!this.isNicknameTaken(nickname)) return nickname;
+    }
+
+    let suffix = this.players.size + 1;
+    while (true) {
+      const nickname = `玩家${suffix}`;
+      if (!this.isNicknameTaken(nickname)) return nickname;
+      suffix++;
+    }
+  }
+
+  private rejectJoin(ws: WebSocket, code: string, message: string): void {
+    this.send(ws, { type: 'error', code, message });
+    ws.close(4002, code);
+  }
+
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
 
@@ -574,4 +611,8 @@ function generateNickname(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
   return adj + noun;
+}
+
+function normalizeNickname(nickname: string): string {
+  return (nickname || '').trim().slice(0, 12);
 }

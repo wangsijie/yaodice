@@ -419,7 +419,7 @@
     
     <input id="input-code" class="input-code" type="tel" maxlength="6" placeholder="000000" inputmode="numeric">
     <div class="gap"></div>
-    <button class="btn-secondary" onclick="joinRoom()">加入房间</button>
+    <button id="btn-join" class="btn-secondary" onclick="joinRoom()">加入房间</button>
     <p id="home-error" class="error-text" style="display:none"></p>
   </div>
 
@@ -433,7 +433,8 @@
     <div class="gap"></div>
     <button id="btn-random-nick" class="btn-secondary btn-small" onclick="randomNickname()">🎲 随机一个</button>
     <div class="gap-lg"></div>
-    <button onclick="confirmNickname()">进入房间</button>
+    <button id="btn-confirm-nickname" onclick="confirmNickname()">进入房间</button>
+    <p id="nickname-error" class="error-text" style="display:none"></p>
   </div>
 
   <!-- Page: Lobby -->
@@ -536,6 +537,8 @@
     let audioContext = null;
     let audioUnlocked = false;
     let rollAudioElement = null;
+    let roomActionPending = false;
+    let joinPending = false;
 
     let state = {
       roomCode: savedRoomSession?.roomCode || '',
@@ -562,8 +565,8 @@
 
     // ============ Home ============
     async function createRoom() {
-      const btn = document.getElementById('btn-create');
-      btn.disabled = true;
+      if (roomActionPending) return;
+      setRoomActionPending(true);
       try {
         const res = await fetch('/api/room/create', { method: 'POST' });
         const data = await res.json();
@@ -574,16 +577,18 @@
       } catch (e) {
         showError('home-error', '创建失败，请重试');
       } finally {
-        btn.disabled = false;
+        setRoomActionPending(false);
       }
     }
 
     async function joinRoom() {
+      if (roomActionPending) return;
       const code = document.getElementById('input-code').value.trim();
       if (!/^\d{6}$/.test(code)) {
         showError('home-error', '请输入6位数字房间号');
         return;
       }
+      setRoomActionPending(true);
       try {
         const res = await fetch('/api/room/' + code);
         const data = await res.json();
@@ -597,7 +602,15 @@
         prepareNicknameInput();
       } catch (e) {
         showError('home-error', '加入失败，请重试');
+      } finally {
+        setRoomActionPending(false);
       }
+    }
+
+    function setRoomActionPending(pending) {
+      roomActionPending = pending;
+      document.getElementById('btn-create').disabled = pending;
+      document.getElementById('btn-join').disabled = pending;
     }
 
     function showError(id, msg) {
@@ -629,11 +642,16 @@
     }
 
     function confirmNickname() {
+      if (joinPending) return;
       const nick = document.getElementById('input-nickname').value.trim();
       if (!nick) {
         randomNickname();
         return;
       }
+      hideError('nickname-error');
+      joinPending = true;
+      document.getElementById('btn-confirm-nickname').disabled = true;
+      document.getElementById('btn-random-nick').disabled = true;
       state.nickname = nick;
       if (nick !== lastGeneratedNickname) {
         localStorage.setItem(NICKNAME_STORAGE_KEY, nick);
@@ -707,6 +725,7 @@
       };
       document.getElementById('input-code').value = '';
       document.getElementById('results-area').style.display = 'none';
+      resetJoinPending();
     }
 
     let reconnectToastEl = null;
@@ -785,7 +804,10 @@
         ws = null;
 
         if (intentionalClose) return;
-        if (event.code === 1000 || event.code === 4001) return;
+        if (event.code === 1000 || event.code === 4001 || event.code === 4002) {
+          resetJoinPending();
+          return;
+        }
 
         attemptReconnect();
       };
@@ -826,6 +848,7 @@
           if (wasReconnecting) {
             showToast('已重新连接');
           }
+          resetJoinPending();
           if (msg.round) {
             // Rejoin mid-round
             state.round = msg.round;
@@ -846,6 +869,16 @@
           } else {
             showPage('lobby');
             renderLobby();
+          }
+          break;
+
+        case 'error':
+          resetJoinPending();
+          if (msg.code === 'nickname_taken') {
+            showPage('nickname');
+            showError('nickname-error', msg.message || '这个昵称已经在房间里了，请换一个');
+          } else {
+            showToast(msg.message || '操作失败，请重试');
           }
           break;
 
@@ -1317,6 +1350,20 @@
       el.textContent = text;
       document.body.appendChild(el);
       setTimeout(() => el.remove(), 2000);
+    }
+
+    function hideError(id) {
+      const el = document.getElementById(id);
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+
+    function resetJoinPending() {
+      joinPending = false;
+      const confirmBtn = document.getElementById('btn-confirm-nickname');
+      const randomBtn = document.getElementById('btn-random-nick');
+      if (confirmBtn) confirmBtn.disabled = false;
+      if (randomBtn) randomBtn.disabled = false;
     }
 
     // Auto-focus code input
