@@ -83,6 +83,8 @@ function leaveRoom() {
     reconnectTimer = null;
   }
   hideReconnectToast();
+  if (typeof hideReconnectBanner === 'function') hideReconnectBanner();
+  if (typeof stopHeartbeat === 'function') stopHeartbeat();
 
   if (ws) {
     if (ws.readyState === WebSocket.OPEN) {

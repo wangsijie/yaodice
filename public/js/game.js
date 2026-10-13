@@ -18,10 +18,17 @@ function renderGame() {
   document.getElementById('game-mode-badge').textContent =
     state.round.mode === '1v1' ? '1v1' : '所有人';
 
+  const hostPlayer = state.players.find(pl => pl.id === state.hostId);
+  const isHostConnected = hostPlayer ? hostPlayer.connected !== false : true;
+  const canManageRound = state.myId === state.hostId || !isHostConnected;
+
   // Participant status
   const statusEl = document.getElementById('participants-status');
   statusEl.innerHTML = participants.map(p => {
     const pid = p.id;
+    const playerInfo = state.players.find(pl => pl.id === pid);
+    const isConnected = playerInfo ? playerInfo.connected !== false : true;
+
     let statusClass = 'waiting';
     let statusText = '等待中';
     if (state.revealedPlayers.has(pid)) {
@@ -29,15 +36,43 @@ function renderGame() {
       statusText = '已开';
     } else if (state.rolledPlayers.has(pid)) {
       statusClass = 'rolled';
-      statusText = '已摇';
+      statusText = isConnected ? '已摇' : '已摇(离线)';
+    } else if (!isConnected) {
+      statusClass = 'offline';
+      statusText = '离线';
     }
+
+    const showSkip = canManageRound && !isConnected && !state.revealedPlayers.has(pid);
+    const skipButton = showSkip
+      ? `<button type="button" class="btn-skip-participant" onclick="skipPlayer('${pid}')">跳过</button>`
+      : '';
+
     return `
       <div class="participant-row">
         <span>${escHtml(p.nickname)}</span>
         ${pid === state.myId ? '<span class="you-badge" style="font-size:0.7rem">你</span>' : ''}
         <span class="p-status ${statusClass}">${statusText}</span>
+        ${skipButton}
       </div>`;
   }).join('');
+
+  let abortBtn = document.getElementById('btn-abort-round');
+  if (!abortBtn && statusEl.parentNode) {
+    abortBtn = document.createElement('button');
+    abortBtn.id = 'btn-abort-round';
+    abortBtn.className = 'btn-abort-round';
+    abortBtn.type = 'button';
+    abortBtn.textContent = '取消本局回合';
+    abortBtn.onclick = abortRound;
+    statusEl.parentNode.insertBefore(abortBtn, statusEl.nextSibling);
+  }
+  if (abortBtn) {
+    const hasOffline = participants.some(p => {
+      const pl = state.players.find(item => item.id === p.id);
+      return pl && pl.connected === false;
+    });
+    abortBtn.style.display = (canManageRound && hasOffline) ? 'block' : 'none';
+  }
 
   // Show/hide areas based on participation
   const isParticipant = state.isParticipant;
@@ -232,6 +267,8 @@ function clearCurrentRound() {
   state.isParticipant = false;
   state.rolledPlayers.clear();
   state.revealedPlayers.clear();
+  const abortBtn = document.getElementById('btn-abort-round');
+  if (abortBtn) abortBtn.style.display = 'none';
 }
 
 function setDiceCountsOnesMode(mode) {
@@ -370,7 +407,20 @@ function backToLobby() {
   state.revealedPlayers.clear();
   lastRevealedResults = null;
   diceCountsOnesMode = 'wild';
+  const abortBtn = document.getElementById('btn-abort-round');
+  if (abortBtn) abortBtn.style.display = 'none';
   document.getElementById('results-area').style.display = 'none';
   showPage('lobby');
   renderLobby();
 }
+
+function skipPlayer(id) {
+  sendMsg({ type: 'skip_player', playerId: id });
+}
+
+function abortRound() {
+  if (confirm('确定要取消当前回合吗？')) {
+    sendMsg({ type: 'abort_round' });
+  }
+}
+

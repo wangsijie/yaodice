@@ -35,8 +35,13 @@ type ServerMessage =
         allRevealed: boolean;
         allResults: RevealedResult[] | null;
       };
+      phase?: 'lobby' | 'playing' | 'results';
+      lastResults?: RevealedResult[] | null;
       gameMode: 'all' | '1v1';
       selectedPlayers: string[];
+    }
+  | {
+      type: 'pong';
     }
   | {
       type: 'player_joined';
@@ -65,6 +70,15 @@ type ServerMessage =
       type: 'round_started';
       mode: 'all' | '1v1';
       participants: RoundParticipant[];
+    }
+  | {
+      type: 'round_aborted';
+      reason?: string;
+    }
+  | {
+      type: 'player_skipped';
+      id: string;
+      participants?: RoundParticipant[];
     }
   | {
       type: 'your_dice';
@@ -96,7 +110,10 @@ type ClientMessage =
   | { type: 'start_round' }
   | { type: 'roll' }
   | { type: 'reveal' }
-  | { type: 'leave' };
+  | { type: 'leave' }
+  | { type: 'ping' }
+  | { type: 'skip_player'; playerId: string }
+  | { type: 'abort_round' };
 
 type DiceTotals = {
   wild: number;
@@ -292,6 +309,133 @@ describe('GameRoom multiplayer integration', () => {
         { id: bob.id, nickname: 'Bob', dice: [6, 6, 6, 6, 6] },
       ]);
     }
+  });
+
+  it('responds to ping with pong', async () => {
+    const roomCode = '1122';
+    const alice = await joinRoom(roomCode, 'Alice');
+    alice.send({ type: 'ping' });
+    const pong = await alice.waitFor('pong');
+    expect(pong).toEqual({ type: 'pong' });
+  });
+
+  it('preserves and restores lastResults when reconnecting during results phase', async () => {
+    const roomCode = '3344';
+    const alice = await joinRoom(roomCode, 'Alice');
+    const bob = await joinRoom(roomCode, 'Bob');
+    await alice.waitFor('player_joined', (msg) => msg.nickname === 'Bob');
+
+    alice.send({ type: 'start_round' });
+    await Promise.all([alice.waitFor('round_started'), bob.waitFor('round_started')]);
+
+    mockDiceRolls([1, 2, 3, 4, 5], [6, 6, 6, 6, 6]);
+    await rollAndAssertPerspective(alice, [alice, bob], [1, 2, 3, 4, 5], false);
+    await rollAndAssertPerspective(bob, [alice, bob], [6, 6, 6, 6, 6], true);
+
+    alice.send({ type: 'reveal' });
+    bob.send({ type: 'reveal' });
+    await Promise.all([alice.waitFor('all_revealed'), bob.waitFor('all_revealed')]);
+
+    const bobToken = bob.reconnectToken;
+    bob.close();
+    await alice.waitFor('player_left', (msg) => msg.id === bob.id);
+
+    const reconnectedBob = await reconnectToRoom(roomCode, bobToken, 'Bob');
+    expect(reconnectedBob.lastRoomState.phase).toBe('results');
+    expect(reconnectedBob.lastRoomState.lastResults).toEqual([
+      { id: alice.id, nickname: 'Alice', dice: [1, 2, 3, 4, 5] },
+      { id: bob.id, nickname: 'Bob', dice: [6, 6, 6, 6, 6] },
+    ]);
+  });
+
+  it('auto-reveals already-rolled dice when a player disconnects and others revealed', async () => {
+    const roomCode = '5566';
+    const alice = await joinRoom(roomCode, 'Alice');
+    const bob = await joinRoom(roomCode, 'Bob');
+    await alice.waitFor('player_joined', (msg) => msg.nickname === 'Bob');
+
+    alice.send({ type: 'start_round' });
+    await Promise.all([alice.waitFor('round_started'), bob.waitFor('round_started')]);
+
+    mockDiceRolls([2, 3, 4, 5, 6], [5, 5, 5, 5, 5]);
+    await rollAndAssertPerspective(alice, [alice, bob], [2, 3, 4, 5, 6], false);
+    await rollAndAssertPerspective(bob, [alice, bob], [5, 5, 5, 5, 5], true);
+
+    alice.send({ type: 'reveal' });
+    await alice.waitFor('player_revealed', (msg) => msg.id === alice.id);
+
+    // Bob has rolled, but disconnects before revealing
+    bob.close();
+
+    // Alice should receive all_revealed automatically without deadlocking
+    const revealed = await alice.waitFor('all_revealed');
+    expect(revealed.results).toEqual([
+      { id: alice.id, nickname: 'Alice', dice: [2, 3, 4, 5, 6] },
+      { id: bob.id, nickname: 'Bob', dice: [5, 5, 5, 5, 5] },
+    ]);
+  });
+
+  it('allows host to skip a disconnected player who has not rolled', async () => {
+    const roomCode = '7788';
+    const alice = await joinRoom(roomCode, 'Alice');
+    const bob = await joinRoom(roomCode, 'Bob');
+    const carol = await joinRoom(roomCode, 'Carol');
+    await Promise.all([
+      alice.waitFor('player_joined', (msg) => msg.nickname === 'Carol'),
+      bob.waitFor('player_joined', (msg) => msg.nickname === 'Carol'),
+    ]);
+
+    alice.send({ type: 'start_round' });
+    await Promise.all([
+      alice.waitFor('round_started'),
+      bob.waitFor('round_started'),
+      carol.waitFor('round_started'),
+    ]);
+
+    // Carol disconnects without rolling
+    carol.close();
+    await Promise.all([
+      alice.waitFor('player_left', (msg) => msg.id === carol.id),
+      bob.waitFor('player_left', (msg) => msg.id === carol.id),
+    ]);
+
+    // Host skips Carol
+    alice.send({ type: 'skip_player', playerId: carol.id });
+    await Promise.all([
+      alice.waitFor('player_skipped', (msg) => msg.id === carol.id),
+      bob.waitFor('player_skipped', (msg) => msg.id === carol.id),
+    ]);
+
+    mockDiceRolls([1, 1, 1, 1, 1], [2, 2, 2, 2, 2]);
+    await rollAndAssertPerspective(alice, [alice, bob], [1, 1, 1, 1, 1], false);
+    await rollAndAssertPerspective(bob, [alice, bob], [2, 2, 2, 2, 2], true);
+
+    alice.send({ type: 'reveal' });
+    bob.send({ type: 'reveal' });
+
+    const revealed = await Promise.all([alice.waitFor('all_revealed'), bob.waitFor('all_revealed')]);
+    for (const msg of revealed) {
+      expect(msg.results).toEqual([
+        { id: alice.id, nickname: 'Alice', dice: [1, 1, 1, 1, 1] },
+        { id: bob.id, nickname: 'Bob', dice: [2, 2, 2, 2, 2] },
+      ]);
+    }
+  });
+
+  it('allows host to abort round and return to lobby', async () => {
+    const roomCode = '9900';
+    const alice = await joinRoom(roomCode, 'Alice');
+    const bob = await joinRoom(roomCode, 'Bob');
+    await alice.waitFor('player_joined', (msg) => msg.nickname === 'Bob');
+
+    alice.send({ type: 'start_round' });
+    await Promise.all([alice.waitFor('round_started'), bob.waitFor('round_started')]);
+
+    alice.send({ type: 'abort_round' });
+    await Promise.all([
+      alice.waitFor('round_aborted'),
+      bob.waitFor('round_aborted'),
+    ]);
   });
 
   it.each([

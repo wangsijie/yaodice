@@ -28,6 +28,11 @@ interface StoredRoom {
   players: Player[];
   gameMode: 'all' | '1v1';
   selectedPlayers: string[];
+  lastResults?: {
+    id: string;
+    nickname: string;
+    dice: number[];
+  }[] | null;
   round: {
     mode: 'all' | '1v1';
     participants: string[];
@@ -48,7 +53,10 @@ type ClientMessage =
   | { type: 'start_round' }
   | { type: 'roll' }
   | { type: 'reveal' }
-  | { type: 'leave' };
+  | { type: 'leave' }
+  | { type: 'ping' }
+  | { type: 'skip_player'; playerId: string }
+  | { type: 'abort_round' };
 
 export class GameRoom extends DurableObject {
   private players: Map<string, Player> = new Map();
@@ -62,6 +70,7 @@ export class GameRoom extends DurableObject {
   private gameMode: 'all' | '1v1' = 'all';
   private selectedPlayers: string[] = [];
   private phase: RoomPhase = 'lobby';
+  private lastResults: { id: string; nickname: string; dice: number[] }[] | null = null;
   private loaded = false;
 
   async fetch(request: Request): Promise<Response> {
@@ -98,6 +107,22 @@ export class GameRoom extends DurableObject {
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
 
+    if (
+      typeof WebSocketRequestResponsePair !== 'undefined' &&
+      typeof this.ctx.setWebSocketAutoResponse === 'function'
+    ) {
+      try {
+        this.ctx.setWebSocketAutoResponse(
+          new WebSocketRequestResponsePair(
+            JSON.stringify({ type: 'ping' }),
+            JSON.stringify({ type: 'pong' })
+          )
+        );
+      } catch {
+        // Fallback to webSocketMessage handling
+      }
+    }
+
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -113,6 +138,9 @@ export class GameRoom extends DurableObject {
     }
 
     switch (msg.type) {
+      case 'ping':
+        this.send(ws, { type: 'pong' });
+        break;
       case 'join':
         await this.handleJoin(ws, msg.nickname);
         break;
@@ -130,6 +158,12 @@ export class GameRoom extends DurableObject {
         break;
       case 'reveal':
         await this.handleReveal(ws);
+        break;
+      case 'skip_player':
+        await this.handleSkipPlayer(ws, msg.playerId);
+        break;
+      case 'abort_round':
+        await this.handleAbortRound(ws);
         break;
       case 'leave':
         await this.handleLeave(ws);
@@ -167,6 +201,11 @@ export class GameRoom extends DurableObject {
         id: playerId,
         hostId: this.hostId,
       });
+
+      // If in a round, check if disconnected player already rolled and others are done
+      if (this.round) {
+        await this.checkAllRevealed();
+      }
 
       await this.saveState();
     }
@@ -211,8 +250,10 @@ export class GameRoom extends DurableObject {
       reconnectToken,
       roomCode: this.roomCode,
       hostId: this.hostId,
+      phase: this.phase,
       players: this.getPlayerList(),
       round: this.getRoundState(playerId),
+      lastResults: this.phase === 'results' ? this.lastResults : null,
       gameMode: this.gameMode,
       selectedPlayers: this.selectedPlayers,
     });
@@ -272,8 +313,10 @@ export class GameRoom extends DurableObject {
       reconnectToken,
       roomCode: this.roomCode,
       hostId: this.hostId,
+      phase: this.phase,
       players: this.getPlayerList(),
       round: this.getRoundState(playerId),
+      lastResults: this.phase === 'results' ? this.lastResults : null,
       gameMode: this.gameMode,
       selectedPlayers: this.selectedPlayers,
     });
@@ -377,6 +420,7 @@ export class GameRoom extends DurableObject {
       revealed: new Set(),
     };
     this.phase = 'playing';
+    this.lastResults = null;
 
     this.broadcast({
       type: 'round_started',
@@ -428,7 +472,37 @@ export class GameRoom extends DurableObject {
       id: playerId,
     });
 
-    // Check if all revealed
+    const finished = await this.checkAllRevealed();
+    if (!finished) {
+      await this.saveState();
+    }
+  }
+
+  private async checkAllRevealed(): Promise<boolean> {
+    if (!this.round) return false;
+
+    const connectedParticipants = this.round.participants.filter(
+      id => this.players.get(id)?.connected
+    );
+
+    // Only auto-reveal disconnected players if all online participants have already revealed
+    const allConnectedRevealed =
+      connectedParticipants.length > 0 &&
+      connectedParticipants.every(id => this.round!.revealed.has(id));
+
+    if (allConnectedRevealed) {
+      for (const pid of this.round.participants) {
+        const p = this.players.get(pid);
+        if (p && !p.connected && this.round.rolled.has(pid) && !this.round.revealed.has(pid)) {
+          this.round.revealed.add(pid);
+          this.broadcast({
+            type: 'player_revealed',
+            id: pid,
+          });
+        }
+      }
+    }
+
     if (this.round.revealed.size === this.round.participants.length) {
       const results = this.round.participants.map(id => ({
         id,
@@ -436,15 +510,107 @@ export class GameRoom extends DurableObject {
         dice: this.round!.dice.get(id) || [],
       }));
 
+      this.lastResults = results;
+      this.round = null;
+      this.phase = 'results';
+
       this.broadcast({
         type: 'all_revealed',
         results,
       });
 
-      this.round = null;
-      this.phase = 'results';
+      await this.saveState();
+      return true;
     }
 
+    return false;
+  }
+
+  private async handleSkipPlayer(ws: WebSocket, targetPlayerId: string): Promise<void> {
+    const playerId = this.wsToPlayer.get(ws);
+    if (!playerId || !this.round) return;
+
+    const hostPlayer = this.hostId ? this.players.get(this.hostId) : null;
+    const isHost = playerId === this.hostId;
+    const isHostOffline = !hostPlayer || !hostPlayer.connected;
+    const isParticipant = this.round.participants.includes(playerId);
+
+    if (!isHost && (!isHostOffline || !isParticipant)) {
+      return;
+    }
+
+    if (!this.round.participants.includes(targetPlayerId)) return;
+
+    const target = this.players.get(targetPlayerId);
+    if (target?.connected && !isHost) return;
+
+    // If target already rolled, reveal their dice
+    if (this.round.rolled.has(targetPlayerId)) {
+      if (!this.round.revealed.has(targetPlayerId)) {
+        this.round.revealed.add(targetPlayerId);
+        this.broadcast({
+          type: 'player_revealed',
+          id: targetPlayerId,
+        });
+      }
+      const finished = await this.checkAllRevealed();
+      if (!finished) {
+        await this.saveState();
+      }
+      return;
+    }
+
+    // Target has not rolled: remove from this round's participants
+    this.round.participants = this.round.participants.filter(id => id !== targetPlayerId);
+    this.round.dice.delete(targetPlayerId);
+    this.round.rolled.delete(targetPlayerId);
+    this.round.revealed.delete(targetPlayerId);
+
+    if (this.round.participants.length < 2) {
+      this.round = null;
+      this.phase = 'lobby';
+      this.broadcast({
+        type: 'round_aborted',
+        reason: '参与人数不足，当前回合已取消',
+      });
+      this.broadcastRoomState();
+      await this.saveState();
+    } else {
+      this.broadcast({
+        type: 'player_skipped',
+        id: targetPlayerId,
+        participants: this.round.participants.map(id => ({
+          id,
+          nickname: this.players.get(id)?.nickname || '',
+        })),
+      });
+      const finished = await this.checkAllRevealed();
+      if (!finished) {
+        await this.saveState();
+      }
+    }
+  }
+
+  private async handleAbortRound(ws: WebSocket): Promise<void> {
+    const playerId = this.wsToPlayer.get(ws);
+    if (!playerId || !this.round) return;
+
+    const hostPlayer = this.hostId ? this.players.get(this.hostId) : null;
+    const isHost = playerId === this.hostId;
+    const isHostOffline = !hostPlayer || !hostPlayer.connected;
+    const isParticipant = this.round.participants.includes(playerId);
+
+    if (!isHost && (!isHostOffline || !isParticipant)) {
+      return;
+    }
+
+    this.round = null;
+    this.phase = 'lobby';
+    this.broadcast({
+      type: 'round_aborted',
+      reason: '当前回合已取消',
+    });
+    this.broadcastRoomState();
     await this.saveState();
   }
 
@@ -524,8 +690,10 @@ export class GameRoom extends DurableObject {
         reconnectToken: player.reconnectToken,
         roomCode: this.roomCode,
         hostId: this.hostId,
+        phase: this.phase,
         players: this.getPlayerList(),
         round: this.getRoundState(playerId),
+        lastResults: this.phase === 'results' ? this.lastResults : null,
         gameMode: this.gameMode,
         selectedPlayers: this.selectedPlayers,
       });
@@ -570,6 +738,7 @@ export class GameRoom extends DurableObject {
       this.gameMode = stored.gameMode;
       this.selectedPlayers = stored.selectedPlayers;
       this.phase = stored.phase ?? (stored.round ? 'playing' : 'lobby');
+      this.lastResults = stored.lastResults ?? null;
       this.round = stored.round ? {
         mode: stored.round.mode,
         participants: stored.round.participants,
@@ -603,6 +772,7 @@ export class GameRoom extends DurableObject {
       roomCode: this.roomCode,
       hostId: this.hostId,
       phase: this.phase,
+      lastResults: this.lastResults,
       players: [...this.players.values()],
       gameMode: this.gameMode,
       selectedPlayers: this.selectedPlayers,

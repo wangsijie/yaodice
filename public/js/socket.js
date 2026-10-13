@@ -1,5 +1,11 @@
 // ============ WebSocket ============
 let reconnectToastEl = null;
+let reconnectBannerEl = null;
+
+const HEARTBEAT_INTERVAL = 20000;
+const HEARTBEAT_TIMEOUT = 8000;
+let heartbeatTimer = null;
+let heartbeatTimeoutTimer = null;
 
 function showReconnectToast(attempt) {
   if (!reconnectToastEl) {
@@ -18,22 +24,131 @@ function hideReconnectToast() {
   }
 }
 
-function attemptReconnect() {
+function showReconnectBanner() {
+  if (!reconnectBannerEl) {
+    reconnectBannerEl = document.createElement('div');
+    reconnectBannerEl.className = 'reconnect-banner';
+    reconnectBannerEl.onclick = () => {
+      retryConnection();
+    };
+    document.body.prepend(reconnectBannerEl);
+  }
+  reconnectBannerEl.textContent = '连接已断开，点击重新连接';
+}
+
+function hideReconnectBanner() {
+  if (reconnectBannerEl) {
+    reconnectBannerEl.remove();
+    reconnectBannerEl = null;
+  }
+}
+
+function retryConnection() {
+  hideReconnectBanner();
+  reconnectAttempt = 0;
+  showReconnectToast(1);
+  connectWebSocket();
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: 'ping' }));
+        if (heartbeatTimeoutTimer) clearTimeout(heartbeatTimeoutTimer);
+        heartbeatTimeoutTimer = setTimeout(() => {
+          console.warn('Heartbeat pong timed out, resetting connection...');
+          handleSocketDied();
+        }, HEARTBEAT_TIMEOUT);
+      } catch {
+        handleSocketDied();
+      }
+    }
+  }, HEARTBEAT_INTERVAL);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (heartbeatTimeoutTimer) {
+    clearTimeout(heartbeatTimeoutTimer);
+    heartbeatTimeoutTimer = null;
+  }
+}
+
+function onHeartbeatActivity() {
+  if (heartbeatTimeoutTimer) {
+    clearTimeout(heartbeatTimeoutTimer);
+    heartbeatTimeoutTimer = null;
+  }
+}
+
+function handleSocketDied() {
+  stopHeartbeat();
+  if (ws) {
+    try {
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    } catch {}
+    ws = null;
+  }
+  attemptReconnect();
+}
+
+function handleAppWakeup() {
+  if (document.visibilityState === 'hidden') return;
+  if (!state.roomCode) return;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!reconnectTimer) {
+      showReconnectToast(reconnectAttempt + 1);
+      connectWebSocket();
+    }
+  } else {
+    try {
+      ws.send(JSON.stringify({ type: 'ping' }));
+      if (heartbeatTimeoutTimer) clearTimeout(heartbeatTimeoutTimer);
+      heartbeatTimeoutTimer = setTimeout(() => {
+        console.warn('Wakeup ping timed out, forcing reconnect...');
+        handleSocketDied();
+      }, 3000);
+    } catch {
+      handleSocketDied();
+    }
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    handleAppWakeup();
+  }
+});
+window.addEventListener('pageshow', handleAppWakeup);
+window.addEventListener('focus', handleAppWakeup);
+
+function attemptReconnect(immediate = false) {
   if (reconnectAttempt >= RECONNECT_MAX_ATTEMPTS) {
-    showToast('连接已断开，请刷新页面重试');
-    clearRoomSession();
-    resetState();
-    showPage('home');
+    hideReconnectToast();
+    showReconnectBanner();
     return;
   }
 
   reconnectAttempt++;
-  const delay = Math.min(
+  const delay = immediate ? 0 : Math.min(
     RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempt - 1),
     RECONNECT_MAX_DELAY
   );
 
   showReconnectToast(reconnectAttempt);
+
+  if (delay === 0) {
+    connectWebSocket();
+    return;
+  }
 
   reconnectTimer = setTimeout(() => {
     connectWebSocket();
@@ -47,12 +162,18 @@ function connectWebSocket() {
     reconnectTimer = null;
   }
 
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${proto}//${location.host}/ws/${state.roomCode}`);
   ws = socket;
 
   socket.onopen = () => {
     if (ws !== socket) return;
+    startHeartbeat();
+    hideReconnectBanner();
     if (reconnectToken) {
       socket.send(JSON.stringify({ type: 'reconnect', reconnectToken, nickname: state.nickname }));
     } else {
@@ -62,7 +183,14 @@ function connectWebSocket() {
 
   socket.onmessage = (e) => {
     if (ws !== socket) return;
-    const msg = JSON.parse(e.data);
+    onHeartbeatActivity();
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (msg.type === 'pong') return;
     handleMessage(msg);
   };
 
@@ -72,6 +200,7 @@ function connectWebSocket() {
 
   socket.onclose = (event) => {
     if (ws !== socket) return;
+    stopHeartbeat();
     ws = null;
 
     if (intentionalClose) return;
@@ -86,8 +215,13 @@ function connectWebSocket() {
 
 function sendMsg(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-    return true;
+    try {
+      ws.send(JSON.stringify(msg));
+      return true;
+    } catch {
+      handleSocketDied();
+      return false;
+    }
   }
   if (state.roomCode && !reconnectTimer) {
     showReconnectToast(reconnectAttempt + 1);
@@ -115,6 +249,7 @@ function handleMessage(msg) {
 
       reconnectAttempt = 0;
       hideReconnectToast();
+      hideReconnectBanner();
 
       if (wasReconnecting) {
         showToast('已重新连接');
@@ -137,6 +272,10 @@ function handleMessage(msg) {
           showPage('game');
           renderGame();
         }
+      } else if (msg.phase === 'results' && msg.lastResults) {
+        showPage('game');
+        renderGame();
+        showResults(msg.lastResults);
       } else {
         showPage('lobby');
         renderLobby();
@@ -170,6 +309,9 @@ function handleMessage(msg) {
       }
       state.hostId = msg.hostId;
       renderLobby();
+      if (state.round) {
+        renderGame();
+      }
       break;
 
     case 'player_reconnected':
@@ -180,6 +322,9 @@ function handleMessage(msg) {
       }
       state.hostId = msg.hostId;
       renderLobby();
+      if (state.round) {
+        renderGame();
+      }
       showToast(msg.nickname + ' 重新连接了');
       break;
 
@@ -213,6 +358,26 @@ function handleMessage(msg) {
         showPage('game');
         renderGame();
       }
+      break;
+
+    case 'round_aborted':
+      showToast(msg.reason || '当前回合已取消');
+      if (typeof clearCurrentRound === 'function') {
+        clearCurrentRound();
+      } else {
+        state.round = null;
+      }
+      document.getElementById('results-area').style.display = 'none';
+      showPage('lobby');
+      renderLobby();
+      break;
+
+    case 'player_skipped':
+      if (state.round && msg.participants) {
+        state.round.participants = msg.participants;
+      }
+      showToast('已跳过掉线玩家');
+      renderGame();
       break;
 
     case 'your_dice':
