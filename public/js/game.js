@@ -12,11 +12,17 @@ let diceCountsOnesMode = 'wild';
 let autoRollAfterRoundStart = false;
 
 function renderGame() {
+  const mode = state.round ? state.round.mode : state.gameMode;
+  document.getElementById('game-mode-badge').textContent =
+    mode === '1v1' ? '1v1' : '所有人';
+
+  const roundPlayArea = document.getElementById('round-play-area');
+  if (roundPlayArea) {
+    roundPlayArea.style.display = isViewingResults() ? 'none' : 'block';
+  }
+
   if (!state.round) return;
   const participants = state.round.participants;
-
-  document.getElementById('game-mode-badge').textContent =
-    state.round.mode === '1v1' ? '1v1' : '所有人';
 
   const hostPlayer = state.players.find(pl => pl.id === state.hostId);
   const isHostConnected = hostPlayer ? hostPlayer.connected !== false : true;
@@ -224,6 +230,10 @@ function revealDice() {
 }
 
 function showResults(results) {
+  const roundPlayArea = document.getElementById('round-play-area');
+  if (roundPlayArea) {
+    roundPlayArea.style.display = 'none';
+  }
   document.getElementById('results-area').style.display = 'block';
   document.getElementById('btn-roll').style.display = 'none';
   document.getElementById('btn-reveal').style.display = 'none';

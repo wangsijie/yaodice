@@ -83,32 +83,33 @@
       <button class="btn-danger btn-small" onclick="leaveRoom()" style="margin-left:auto">离开</button>
     </div>
 
-    <div class="game-section-label">参与者状态</div>
-    <div id="participants-status" class="participants-status"></div>
+    <div id="round-play-area" style="width:100%;max-width:320px">
+      <div class="game-section-label">参与者状态</div>
+      <div id="participants-status" class="participants-status"></div>
 
-    <!-- Your dice area -->
-    <div id="your-dice-area" style="width:100%;max-width:320px;text-align:center">
-      <div class="game-section-label">你的骰子</div>
-      <div id="your-dice" class="dice-container">
-        <div class="die hidden-die"></div>
-        <div class="die hidden-die"></div>
-        <div class="die hidden-die"></div>
-        <div class="die hidden-die"></div>
-        <div class="die hidden-die"></div>
+      <!-- Your dice area -->
+      <div id="your-dice-area" style="width:100%;max-width:320px;text-align:center">
+        <div class="game-section-label">你的骰子</div>
+        <div id="your-dice" class="dice-container">
+          <div class="die hidden-die"></div>
+          <div class="die hidden-die"></div>
+          <div class="die hidden-die"></div>
+          <div class="die hidden-die"></div>
+          <div class="die hidden-die"></div>
+        </div>
+        <div class="gap"></div>
+        <button id="btn-roll" onclick="rollDice()">🎲 摇！</button>
+        <button id="btn-reveal" class="btn-reveal" onclick="revealDice()" style="display:none">👀 开！</button>
       </div>
-      <div class="gap"></div>
-      <button id="btn-roll" onclick="rollDice()">🎲 摇！</button>
-      <button id="btn-reveal" class="btn-reveal" onclick="revealDice()" style="display:none">👀 开！</button>
-    </div>
 
-    <!-- Spectator view -->
-    <div id="spectator-hint" style="display:none;color:var(--text-dim);font-size:0.9rem;text-align:center;margin:20px 0">
-      你是观众，等待结果揭晓...
+      <!-- Spectator view -->
+      <div id="spectator-hint" style="display:none;color:var(--text-dim);font-size:0.9rem;text-align:center;margin:20px 0">
+        你是观众，等待结果揭晓...
+      </div>
     </div>
 
     <!-- Results -->
     <div id="results-area" class="results-area" style="display:none">
-      <div class="gap"></div>
       <div class="game-section-label">📊 数字统计</div>
       <div id="dice-counts" class="dice-counts"></div>
       <div class="game-section-label">🎉 所有人的骰子</div>
