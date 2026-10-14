@@ -2,3 +2,8 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcuserstate
+ios/build/
