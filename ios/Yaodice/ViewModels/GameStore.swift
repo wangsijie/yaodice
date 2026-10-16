@@ -7,8 +7,8 @@ import UIKit
 final class GameStore {
     // MARK: - Constants
 
-    private static let serverURL = URL(string: "https://yaodice.sijie.workers.dev")!
-    private static let webSocketBaseURL = URL(string: "wss://yaodice.sijie.workers.dev")!
+    private static let serverURL = URL(string: "https://yao.vwnpc.com")!
+    private static let webSocketBaseURL = URL(string: "wss://yao.vwnpc.com")!
     private static let customNicknameStorageKey = "yaodice_custom_nickname"
     private static let roomSessionStorageKey = "yaodice_room_session"
 
