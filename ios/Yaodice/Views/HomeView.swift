@@ -17,7 +17,7 @@ struct HomeView: View {
                 .foregroundStyle(AppTheme.text)
                 .padding(.bottom, 8)
 
-            Text("多人在线 · 酒桌必备")
+            Text("多人在线 · 聚会必备")
                 .font(.system(size: 15))
                 .foregroundStyle(AppTheme.textDim)
                 .padding(.bottom, 32)

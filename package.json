@@ -1,7 +1,7 @@
 {
   "name": "yaodice",
   "version": "1.0.0",
-  "description": "Multiplayer dice game for Chinese drinking parties",
+  "description": "Multiplayer dice game for parties",
   "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "wrangler dev",
